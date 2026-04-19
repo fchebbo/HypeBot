@@ -11,7 +11,6 @@ FRAME_SKIP = 2
 KO_OFFSET_SEC = 6.0
 CLIP_BEFORE_SEC = 10.0
 CLIP_AFTER_SEC = 3.0
-ZOOM_LEVEL = 0.5
 FFMPEG_TIMEOUT = 120
 
 
@@ -26,6 +25,9 @@ def _load_cache(video_path):
         try:
             with open(path, 'r') as f:
                 events = json.load(f)
+            if not events:
+                print("⚠️  Cache is empty, re-scanning...")
+                return None
             print(f"✅ Loaded {len(events)} KO event(s) from cache — skipping scan.")
             return events
         except Exception as e:
@@ -44,11 +46,6 @@ def _save_cache(video_path, events):
 
 
 def detect_ko_events(video_path, force_rescan=False):
-    """
-    Detects KO flash events in a video.
-    On repeat runs, loads from cache instead of re-scanning.
-    Pass force_rescan=True to ignore cache and scan fresh.
-    """
     if not force_rescan:
         cached = _load_cache(video_path)
         if cached is not None:
@@ -114,10 +111,6 @@ def detect_ko_events(video_path, force_rescan=False):
 
 
 def run_ffmpeg(cmd, clip_label):
-    """
-    Runs an FFmpeg command with a timeout. Prints stderr on failure.
-    Returns True on success, False on failure or timeout.
-    """
     try:
         result = subprocess.run(
             cmd,
@@ -137,9 +130,9 @@ def run_ffmpeg(cmd, clip_label):
 
 def cut_clips(video_path, ko_events, output_dir="clips"):
     """
-    Two separate FFmpeg calls per clip — both proven stable as single-output commands.
-      - vertical/  → 9:16 with zoom out + black bars (Shorts/TikTok/Reels)
-      - original/  → 16:9 re-encoded (review + regular YouTube)
+    Two separate FFmpeg calls per clip:
+      - vertical/  → full 16:9 frame scaled to fit 9:16 canvas, black bars top/bottom
+      - original/  → straight 16:9 re-encode, no cropping
     """
     os.makedirs(output_dir, exist_ok=True)
     vertical_dir = os.path.join(output_dir, "vertical")
@@ -152,28 +145,30 @@ def cut_clips(video_path, ko_events, output_dir="clips"):
     src_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     cap.release()
 
-    # 9:16 dimensions
+    # 9:16 output canvas — use source height, derive width
     out_height = src_height
     out_width = int(src_height * 9 / 16)
     out_width = out_width if out_width % 2 == 0 else out_width - 1
     out_height = out_height if out_height % 2 == 0 else out_height - 1
 
-    # Scaled gameplay dimensions
-    scaled_width = int(out_width * ZOOM_LEVEL / (9 / 16))
-    scaled_width = scaled_width if scaled_width % 2 == 0 else scaled_width - 1
-    scaled_height = int(scaled_width * src_height / src_width)
+    # Scale full 16:9 frame to fit within out_width, preserve aspect ratio
+    # scaled_width = out_width, scaled_height = out_width * (9/16) * (9/16)...
+    # simpler: scale width to out_width, height follows aspect ratio
+    scaled_height = int(out_width * src_height / src_width)
     scaled_height = scaled_height if scaled_height % 2 == 0 else scaled_height - 1
 
-    pad_x = 0
+    # Center vertically with black bars
     pad_y = (out_height - scaled_height) // 2
+
+    # FFmpeg filter: scale full frame to out_width wide, pad top/bottom
     vertical_filter = (
-        f"scale={scaled_width}:{scaled_height},"
-        f"pad={out_width}:{out_height}:{pad_x}:{pad_y}:black"
+        f"scale={out_width}:{scaled_height},"
+        f"pad={out_width}:{out_height}:0:{pad_y}:black"
     )
 
     print(f"\nSource: {src_width}x{src_height}")
-    print(f"Output (9:16): {out_width}x{out_height}")
-    print(f"Gameplay scaled to: {scaled_width}x{scaled_height} (zoom level: {ZOOM_LEVEL})")
+    print(f"9:16 canvas: {out_width}x{out_height}")
+    print(f"Scaled gameplay: {out_width}x{scaled_height}")
     print(f"Black bars: {pad_y}px top and bottom")
     print(f"Cutting {len(ko_events)} clip(s)...\n")
 
@@ -190,7 +185,6 @@ def cut_clips(video_path, ko_events, output_dir="clips"):
 
         print(f"  Clip {i+1}: {ko_mins}m {ko_secs:.1f}s...")
 
-        # Call 1: vertical 9:16
         vertical_cmd = [
             "ffmpeg", "-y",
             "-ss", str(start),
@@ -203,7 +197,6 @@ def cut_clips(video_path, ko_events, output_dir="clips"):
             vertical_path,
         ]
 
-        # Call 2: original 16:9
         original_cmd = [
             "ffmpeg", "-y",
             "-ss", str(start),
