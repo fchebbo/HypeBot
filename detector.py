@@ -13,6 +13,9 @@ CLIP_BEFORE_SEC = 10.0
 CLIP_AFTER_SEC = 3.0
 FFMPEG_TIMEOUT = 120
 
+# --- Blur background tuning ---
+BLUR_STRENGTH = 20      # Higher = more blurred background (10-30 recommended)
+
 
 def _cache_path(video_path):
     base = os.path.splitext(video_path)[0]
@@ -131,8 +134,8 @@ def run_ffmpeg(cmd, clip_label):
 def cut_clips(video_path, ko_events, output_dir="clips"):
     """
     Two separate FFmpeg calls per clip:
-      - vertical/  → full 16:9 frame scaled to fit 9:16 canvas, black bars top/bottom
-      - original/  → straight 16:9 re-encode, no cropping
+      - vertical/  → 9:16 with blurred background + sharp gameplay overlay
+      - original/  → straight 16:9 re-encode
     """
     os.makedirs(output_dir, exist_ok=True)
     vertical_dir = os.path.join(output_dir, "vertical")
@@ -145,31 +148,36 @@ def cut_clips(video_path, ko_events, output_dir="clips"):
     src_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     cap.release()
 
-    # 9:16 output canvas — use source height, derive width
+    # 9:16 canvas dimensions
     out_height = src_height
     out_width = int(src_height * 9 / 16)
     out_width = out_width if out_width % 2 == 0 else out_width - 1
     out_height = out_height if out_height % 2 == 0 else out_height - 1
 
-    # Scale full 16:9 frame to fit within out_width, preserve aspect ratio
-    # scaled_width = out_width, scaled_height = out_width * (9/16) * (9/16)...
-    # simpler: scale width to out_width, height follows aspect ratio
-    scaled_height = int(out_width * src_height / src_width)
-    scaled_height = scaled_height if scaled_height % 2 == 0 else scaled_height - 1
+    # Foreground: scale full frame to fit canvas width, preserve aspect ratio
+    fg_width = out_width
+    fg_height = int(out_width * src_height / src_width)
+    fg_height = fg_height if fg_height % 2 == 0 else fg_height - 1
 
-    # Center vertically with black bars
-    pad_y = (out_height - scaled_height) // 2
+    # Vertical offset to center foreground on canvas
+    fg_y = (out_height - fg_height) // 2
 
-    # FFmpeg filter: scale full frame to out_width wide, pad top/bottom
-    vertical_filter = (
-        f"scale={out_width}:{scaled_height},"
-        f"pad={out_width}:{out_height}:0:{pad_y}:black"
+    # FFmpeg filtergraph:
+    # [bg]  = source scaled to fill full 9:16 canvas + heavily blurred
+    # [fg]  = source scaled to fit width, sharp
+    # overlay fg centered on bg
+    blur_filter = (
+        f"[0:v]scale={out_width}:{out_height}:force_original_aspect_ratio=increase,"
+        f"crop={out_width}:{out_height},"
+        f"boxblur={BLUR_STRENGTH}:{BLUR_STRENGTH}[bg];"
+        f"[0:v]scale={fg_width}:{fg_height}[fg];"
+        f"[bg][fg]overlay=0:{fg_y}"
     )
 
     print(f"\nSource: {src_width}x{src_height}")
     print(f"9:16 canvas: {out_width}x{out_height}")
-    print(f"Scaled gameplay: {out_width}x{scaled_height}")
-    print(f"Black bars: {pad_y}px top and bottom")
+    print(f"Foreground: {fg_width}x{fg_height} at y={fg_y}")
+    print(f"Blur strength: {BLUR_STRENGTH}")
     print(f"Cutting {len(ko_events)} clip(s)...\n")
 
     for i, event in enumerate(ko_events):
@@ -190,7 +198,7 @@ def cut_clips(video_path, ko_events, output_dir="clips"):
             "-ss", str(start),
             "-i", video_path,
             "-t", str(duration),
-            "-vf", vertical_filter,
+            "-filter_complex", blur_filter,
             "-c:v", "libx264",
             "-c:a", "aac",
             "-preset", "fast",
