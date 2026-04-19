@@ -128,13 +128,31 @@ class HypeBot(tk.Tk):
 
     def _run_pipeline(self, url):
         try:
-            self._log("📥  Downloading VOD...")
-            video_path = self._download_vod(url)
+            os.makedirs("downloads", exist_ok=True)
 
-            if not video_path:
-                self._log("❌  Download failed — no file found.")
+            # Step 1: Get video title without downloading
+            self._log("🔎  Fetching video info...")
+            video_title, expected_filename = self._get_video_info(url)
+
+            if not video_title:
+                self._log("❌  Could not fetch video info.")
                 return
 
+            self._log(f"📺  Title: {video_title}")
+
+            # Step 2: Check if already downloaded
+            cached_path = os.path.join("downloads", expected_filename)
+            if os.path.exists(cached_path):
+                self._log(f"✅  Already downloaded — skipping re-download.")
+                video_path = cached_path
+            else:
+                self._log(f"📥  Downloading VOD...")
+                video_path = self._download_vod(url)
+                if not video_path:
+                    self._log("❌  Download failed — no file found.")
+                    return
+
+            # Step 3: Detect KO events
             self._log(f"\n🔍  Scanning for KO flashes...")
             events = detect_ko_events(video_path)
 
@@ -142,21 +160,42 @@ class HypeBot(tk.Tk):
                 self._log("⚠️  No KO events detected. Try adjusting thresholds.")
                 return
 
-            self._log(f"\n✂️  Cutting {len(events)} clip(s)...")
-            cut_clips(video_path, events)
+            # Step 4: Cut clips into subfolder named after video
+            safe_title = self._safe_folder_name(video_title)
+            clips_dir = os.path.join("clips", safe_title)
+            self._log(f"\n✂️  Cutting {len(events)} clip(s) into '{clips_dir}'...")
+            cut_clips(video_path, events, output_dir=clips_dir)
 
             self._log(f"\n✅  Done! Opening clips folder...")
-            self._open_clips_folder()
+            self._open_clips_folder(clips_dir)
 
         except Exception as e:
             self._log(f"\n❌  Error: {e}")
         finally:
             self.after(0, self._pipeline_done)
 
-    def _download_vod(self, url):
-        """Download VOD using yt-dlp, logging progress to the UI."""
-        os.makedirs("downloads", exist_ok=True)
+    def _get_video_info(self, url):
+        """Fetch video title and expected filename without downloading."""
+        ydl_opts = {
+            'quiet': True,
+            'skip_download': True,
+        }
+        try:
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(url, download=False)
+                title = info.get('title', 'Unknown')
+                # yt-dlp sanitizes titles the same way for filenames
+                safe = ydl.prepare_filename(info).replace('\\', '/').split('/')[-1]
+                # Ensure .mp4 extension
+                if not safe.endswith('.mp4'):
+                    safe = os.path.splitext(safe)[0] + '.mp4'
+                return title, safe
+        except Exception as e:
+            self._log(f"⚠️  Could not fetch info: {e}")
+            return None, None
 
+    def _download_vod(self, url):
+        """Download VOD using yt-dlp. Returns file path."""
         class YTLogger:
             def __init__(self, log_fn):
                 self.log_fn = log_fn
@@ -170,25 +209,44 @@ class HypeBot(tk.Tk):
             def error(self, msg):
                 self.log_fn(f"❌  {msg}")
 
+        def progress_hook(d):
+            if d['status'] == 'finished':
+                self._log("✅  Download finished, processing...")
+
         ydl_opts = {
             'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]',
             'outtmpl': 'downloads/%(title)s.%(ext)s',
             'merge_output_format': 'mp4',
             'logger': YTLogger(self._log),
+            'progress_hooks': [progress_hook],
         }
 
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            ydl.download([url])
+            info = ydl.extract_info(url, download=True)
+            filename = ydl.prepare_filename(info).replace('\\', '/').split('/')[-1]
+            if not filename.endswith('.mp4'):
+                filename = os.path.splitext(filename)[0] + '.mp4'
 
+        video_path = os.path.join("downloads", filename)
+        if os.path.exists(video_path):
+            return video_path
+
+        # Fallback — grab whatever is in downloads
         downloads = os.listdir("downloads")
         if downloads:
-            return f"downloads/{downloads[0]}"
+            return os.path.join("downloads", downloads[0])
         return None
 
-    def _open_clips_folder(self):
-        clips_dir = os.path.abspath("clips")
-        os.makedirs(clips_dir, exist_ok=True)
-        subprocess.Popen(f'explorer "{clips_dir}"')
+    def _safe_folder_name(self, title):
+        """Strip characters that are invalid in Windows folder names."""
+        invalid = r'\/:*?"<>|'
+        safe = ''.join(c for c in title if c not in invalid)
+        return safe.strip()[:80]
+
+    def _open_clips_folder(self, clips_dir):
+        abs_path = os.path.abspath(clips_dir)
+        os.makedirs(abs_path, exist_ok=True)
+        subprocess.Popen(f'explorer "{abs_path}"')
 
     def _pipeline_done(self):
         self.progress.stop()
