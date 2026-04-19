@@ -396,6 +396,82 @@
       grid-column: 1 / -1;
       letter-spacing: 0.1em;
     }
+
+    /* ── text panel ── */
+    .text-panel {
+      display: none;
+      flex-direction: column;
+      gap: 6px;
+      margin-top: 4px;
+      padding-top: 8px;
+      border-top: 1px solid var(--border);
+    }
+    .text-panel.open { display: flex; }
+
+    .hook-input {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 2px;
+      color: var(--text);
+      font-family: var(--mono);
+      font-size: 11px;
+      padding: 7px 10px;
+      outline: none;
+      transition: border-color 0.15s;
+      width: 100%;
+    }
+    .hook-input::placeholder { color: var(--muted); }
+    .hook-input:focus { border-color: var(--red); }
+
+    .render-btn {
+      background: var(--red);
+      border: none;
+      border-radius: 2px;
+      color: #fff;
+      cursor: pointer;
+      font-family: var(--display);
+      font-size: 14px;
+      letter-spacing: 0.08em;
+      padding: 7px 0;
+      transition: background 0.15s;
+      width: 100%;
+    }
+    .render-btn:hover { background: #ff4444; }
+    .render-btn:disabled { background: var(--red-dim); cursor: not-allowed; }
+
+    .render-status {
+      font-size: 10px;
+      letter-spacing: 0.1em;
+      text-align: center;
+      color: var(--green);
+      display: none;
+    }
+    .render-status.show { display: block; }
+    .render-status.err  { color: var(--red); }
+
+    /* ── finals section ── */
+    .grid-label {
+      font-size: 10px;
+      letter-spacing: 0.25em;
+      text-transform: uppercase;
+      color: var(--muted);
+      margin: 28px 0 10px;
+      grid-column: 1 / -1;
+    }
+
+    .final-badge {
+      position: absolute;
+      top: 8px;
+      right: 8px;
+      background: var(--green);
+      color: #000;
+      font-family: var(--display);
+      font-size: 11px;
+      letter-spacing: 0.08em;
+      padding: 2px 7px;
+      border-radius: 2px;
+      z-index: 2;
+    }
   </style>
 </head>
 <body>
@@ -459,6 +535,7 @@
     <div class="clips-grid" id="clipsGrid">
       <div class="empty-state">No clips found.</div>
     </div>
+    <div class="clips-grid" id="finalsGrid" style="display:none"></div>
   </section>
 
 </div>
@@ -467,6 +544,7 @@
   let eventSource = null;
   let currentMode = 'url';
   let allSessions = [];
+  let currentSessionIdx = 0;
 
   // ── mode toggle ──────────────────────────────────────────────
   function setMode(mode) {
@@ -582,6 +660,7 @@
   }
 
   function selectSession(idx) {
+    currentSessionIdx = idx;
     document.querySelectorAll('.session-tab').forEach((b, i) => {
       b.classList.toggle('active', i === idx);
     });
@@ -589,20 +668,50 @@
   }
 
   function renderClips(session) {
-    const grid = document.getElementById('clipsGrid');
-    grid.innerHTML = '';
-    if (!session || !session.clips.length) {
+    const grid       = document.getElementById('clipsGrid');
+    const finalsGrid = document.getElementById('finalsGrid');
+    grid.innerHTML       = '';
+    finalsGrid.innerHTML = '';
+    finalsGrid.style.display = 'none';
+
+    if (!session || (!session.clips.length && !session.finals.length)) {
       const empty = document.createElement('div');
       empty.className = 'empty-state';
       empty.textContent = 'No clips in this session.';
       grid.appendChild(empty);
       return;
     }
-    session.clips.forEach(clip => grid.appendChild(makeClipCard(clip)));
+
+    if (session.clips.length) {
+      session.clips.forEach(clip => grid.appendChild(makeClipCard(clip)));
+    } else {
+      const empty = document.createElement('div');
+      empty.className = 'empty-state';
+      empty.textContent = 'No source clips.';
+      grid.appendChild(empty);
+    }
+
+    if (session.finals && session.finals.length) {
+      const label = document.createElement('div');
+      label.className = 'grid-label';
+      label.textContent = 'Finals';
+      finalsGrid.style.display = 'grid';
+      finalsGrid.appendChild(label);
+      session.finals.forEach(path => finalsGrid.appendChild(makeFinalCard(path)));
+    }
   }
 
   function encodePath(p) {
     return p.split('/').map(encodeURIComponent).join('/');
+  }
+
+  function makeVideoEl(src) {
+    const video = document.createElement('video');
+    video.src = '/clips-serve/' + encodePath(src);
+    video.controls = true;
+    video.preload = 'metadata';
+    video.playsInline = true;
+    return video;
   }
 
   function makeClipCard(clip) {
@@ -611,12 +720,7 @@
 
     const wrap = document.createElement('div');
     wrap.className = 'clip-video-wrap';
-
-    const video = document.createElement('video');
-    video.src = '/clips-serve/' + encodePath(clip.vertical);
-    video.controls = true;
-    video.preload = 'metadata';
-    video.playsInline = true;
+    const video = makeVideoEl(clip.vertical);
     wrap.appendChild(video);
 
     const footer = document.createElement('div');
@@ -627,6 +731,7 @@
     nameEl.textContent = formatClipName(clip.name);
     footer.appendChild(nameEl);
 
+    // ── source toggle ──
     const toggle = document.createElement('div');
     toggle.className = 'clip-toggle';
 
@@ -655,7 +760,111 @@
       toggle.appendChild(origBtn);
     }
 
+    // ── add text toggle ──
+    const addTextBtn = document.createElement('button');
+    addTextBtn.className = 'toggle-btn';
+    addTextBtn.textContent = 'ADD TEXT';
+    addTextBtn.style.marginLeft = 'auto';
+    addTextBtn.addEventListener('click', () => {
+      const open = textPanel.classList.toggle('open');
+      addTextBtn.classList.toggle('active', open);
+    });
+    toggle.appendChild(addTextBtn);
+
     footer.appendChild(toggle);
+
+    // ── text panel ──
+    const textPanel = document.createElement('div');
+    textPanel.className = 'text-panel';
+
+    const aboveInput = document.createElement('input');
+    aboveInput.className = 'hook-input';
+    aboveInput.placeholder = 'ABOVE text (optional)';
+
+    const belowInput = document.createElement('input');
+    belowInput.className = 'hook-input';
+    belowInput.placeholder = 'BELOW text (optional)';
+
+    const renderBtn = document.createElement('button');
+    renderBtn.className = 'render-btn';
+    renderBtn.textContent = 'RENDER';
+
+    const status = document.createElement('div');
+    status.className = 'render-status';
+
+    renderBtn.addEventListener('click', async () => {
+      renderBtn.disabled = true;
+      renderBtn.textContent = 'RENDERING...';
+      status.className = 'render-status';
+      status.style.display = 'none';
+
+      try {
+        const res = await fetch('/render-text', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            clip:  clip.vertical,
+            above: aboveInput.value.trim(),
+            below: belowInput.value.trim(),
+          }),
+        });
+        const data = await res.json();
+        if (data.ok) {
+          status.textContent = '✅  Final saved.';
+          status.className = 'render-status show';
+          const currentTitle = allSessions[currentSessionIdx]?.title;
+          const r2 = await fetch('/clips-list');
+          const d2 = await r2.json();
+          allSessions = d2.sessions;
+          renderSessionTabs();
+          const newIdx = allSessions.findIndex(s => s.title === currentTitle);
+          selectSession(newIdx >= 0 ? newIdx : 0);
+          document.getElementById('finalsGrid').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        } else {
+          status.textContent = '❌  Render failed.';
+          status.className = 'render-status show err';
+        }
+      } catch (e) {
+        status.textContent = '❌  Request failed.';
+        status.className = 'render-status show err';
+      }
+
+      renderBtn.disabled = false;
+      renderBtn.textContent = 'RENDER';
+    });
+
+    textPanel.appendChild(aboveInput);
+    textPanel.appendChild(belowInput);
+    textPanel.appendChild(renderBtn);
+    textPanel.appendChild(status);
+    footer.appendChild(textPanel);
+
+    card.appendChild(wrap);
+    card.appendChild(footer);
+    return card;
+  }
+
+  function makeFinalCard(path) {
+    const card = document.createElement('div');
+    card.className = 'clip-card';
+
+    const badge = document.createElement('div');
+    badge.className = 'final-badge';
+    badge.textContent = 'FINAL';
+    card.appendChild(badge);
+
+    const wrap = document.createElement('div');
+    wrap.className = 'clip-video-wrap';
+    wrap.appendChild(makeVideoEl(path));
+
+    const footer = document.createElement('div');
+    footer.className = 'clip-footer';
+    const nameEl = document.createElement('span');
+    nameEl.className = 'clip-name';
+    const parts = path.replace('\\', '/').split('/');
+    nameEl.textContent = formatClipName(parts[parts.length - 1].replace('_final.mp4', ''));
+    footer.appendChild(nameEl);
+
     card.appendChild(wrap);
     card.appendChild(footer);
     return card;

@@ -5,6 +5,7 @@ import queue
 import subprocess
 import yt_dlp
 from detector import detect_ko_events, cut_clips
+from renderer import render_with_text
 
 app = Flask(__name__)
 log_queue = queue.Queue()
@@ -23,6 +24,7 @@ def index():
 @app.route("/browse")
 def browse():
     ps = (
+        '[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; '
         'Add-Type -AssemblyName System.Windows.Forms; '
         '$d = New-Object System.Windows.Forms.OpenFileDialog; '
         '$d.Filter = "Video Files|*.mp4;*.mkv;*.avi;*.mov|All Files|*.*"; '
@@ -31,7 +33,7 @@ def browse():
     )
     try:
         r = subprocess.run(['powershell', '-STA', '-Command', ps],
-                           capture_output=True, text=True, timeout=60)
+                           capture_output=True, timeout=60, encoding='utf-8')
         path = r.stdout.strip()
         return jsonify({'path': path or None})
     except Exception as e:
@@ -62,9 +64,54 @@ def clips_list():
                     'vertical': f'{name}/vertical/{f}',
                     'original': f'{name}/original/{orig_f}' if os.path.exists(os.path.join(orig_dir, orig_f)) else None,
                 })
-        if clips:
-            sessions.append({'title': name, 'clips': clips})
+        finals_dir = os.path.join(session_path, 'finals')
+        finals = []
+        if os.path.exists(finals_dir):
+            for f in sorted(os.listdir(finals_dir)):
+                if f.endswith('.mp4'):
+                    finals.append(f'{name}/finals/{f}')
+
+        if clips or finals:
+            sessions.append({'title': name, 'clips': clips, 'finals': finals})
     return jsonify({'sessions': sessions})
+
+
+@app.route("/render-text", methods=["POST"])
+def render_text_route():
+    data = request.get_json()
+    clip_rel  = data.get("clip", "").strip()
+    above     = data.get("above", "").strip()
+    below     = data.get("below", "").strip()
+
+    if not clip_rel:
+        return jsonify({"error": "No clip specified"}), 400
+
+    clips_root = os.path.abspath("clips")
+    clip_path  = os.path.join(clips_root, clip_rel.replace("/", os.sep))
+    if not os.path.exists(clip_path):
+        return jsonify({"error": "Clip not found"}), 404
+
+    parts      = clip_rel.replace("\\", "/").split("/")
+    session    = parts[0]
+    orig_name  = parts[-1]
+    final_name = orig_name.replace("_vertical.mp4", "_final.mp4")
+    if final_name == orig_name:
+        final_name = os.path.splitext(orig_name)[0] + "_final.mp4"
+
+    finals_dir  = os.path.join(clips_root, session, "finals")
+    output_path = os.path.join(finals_dir, final_name)
+    output_rel  = f"{session}/finals/{final_name}"
+
+    logs = []
+    def capture(msg):
+        logs.append(msg)
+        print(msg)
+
+    ok = render_with_text(clip_path, above, below, output_path, log_fn=capture)
+
+    if ok:
+        return jsonify({"ok": True, "path": output_rel, "logs": logs})
+    return jsonify({"ok": False, "logs": logs}), 500
 
 
 @app.route("/clips-serve/<path:filename>")
