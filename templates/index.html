@@ -1,0 +1,326 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>HypeBot</title>
+  <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet"/>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --red:     #ff2d2d;
+      --red-dim: #991a1a;
+      --bg:      #0a0a0a;
+      --surface: #111111;
+      --border:  #222222;
+      --text:    #f0f0f0;
+      --muted:   #555555;
+      --green:   #00ff88;
+      --mono:    'DM Mono', monospace;
+      --display: 'Bebas Neue', sans-serif;
+    }
+
+    html, body {
+      height: 100%;
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--mono);
+    }
+
+    /* ── noise grain overlay ── */
+    body::before {
+      content: '';
+      position: fixed;
+      inset: 0;
+      background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.04'/%3E%3C/svg%3E");
+      pointer-events: none;
+      z-index: 999;
+    }
+
+    .page {
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 40px 20px;
+      gap: 0;
+    }
+
+    /* ── header ── */
+    .header {
+      text-align: center;
+      margin-bottom: 48px;
+    }
+
+    .logo {
+      font-family: var(--display);
+      font-size: clamp(64px, 12vw, 120px);
+      letter-spacing: 0.04em;
+      line-height: 1;
+      color: var(--text);
+      position: relative;
+      display: inline-block;
+    }
+
+    .logo span {
+      color: var(--red);
+    }
+
+    .logo::after {
+      content: '⚡';
+      position: absolute;
+      top: -12px;
+      right: -32px;
+      font-size: 0.35em;
+      animation: zap 2s ease-in-out infinite;
+    }
+
+    @keyframes zap {
+      0%, 100% { opacity: 1; transform: scale(1) rotate(-5deg); }
+      50%       { opacity: 0.4; transform: scale(0.85) rotate(5deg); }
+    }
+
+    .tagline {
+      font-size: 11px;
+      letter-spacing: 0.3em;
+      text-transform: uppercase;
+      color: var(--muted);
+      margin-top: 8px;
+    }
+
+    /* ── card ── */
+    .card {
+      width: 100%;
+      max-width: 640px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 2px;
+      padding: 32px;
+      position: relative;
+    }
+
+    .card::before {
+      content: '';
+      position: absolute;
+      top: 0; left: 0; right: 0;
+      height: 2px;
+      background: var(--red);
+    }
+
+    /* ── input row ── */
+    .input-row {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 24px;
+    }
+
+    .url-input {
+      flex: 1;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 2px;
+      color: var(--text);
+      font-family: var(--mono);
+      font-size: 13px;
+      padding: 12px 16px;
+      outline: none;
+      transition: border-color 0.15s;
+    }
+
+    .url-input::placeholder { color: var(--muted); }
+    .url-input:focus { border-color: var(--red); }
+
+    .go-btn {
+      background: var(--red);
+      border: none;
+      border-radius: 2px;
+      color: #fff;
+      cursor: pointer;
+      font-family: var(--display);
+      font-size: 18px;
+      letter-spacing: 0.08em;
+      padding: 12px 24px;
+      transition: background 0.15s, transform 0.1s;
+      white-space: nowrap;
+    }
+
+    .go-btn:hover  { background: #ff4444; }
+    .go-btn:active { transform: scale(0.97); }
+    .go-btn:disabled {
+      background: var(--red-dim);
+      cursor: not-allowed;
+      transform: none;
+    }
+
+    /* ── progress bar ── */
+    .progress-wrap {
+      height: 2px;
+      background: var(--border);
+      border-radius: 1px;
+      margin-bottom: 20px;
+      overflow: hidden;
+      opacity: 0;
+      transition: opacity 0.2s;
+    }
+
+    .progress-wrap.active { opacity: 1; }
+
+    .progress-bar {
+      height: 100%;
+      width: 0%;
+      background: var(--red);
+      animation: indeterminate 1.4s ease-in-out infinite;
+      transform-origin: left;
+    }
+
+    @keyframes indeterminate {
+      0%   { transform: translateX(-100%) scaleX(0.5); }
+      50%  { transform: translateX(50%)   scaleX(0.8); }
+      100% { transform: translateX(200%)  scaleX(0.4); }
+    }
+
+    /* ── log box ── */
+    .log-label {
+      font-size: 10px;
+      letter-spacing: 0.25em;
+      text-transform: uppercase;
+      color: var(--muted);
+      margin-bottom: 8px;
+    }
+
+    .log-box {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 2px;
+      padding: 16px;
+      height: 240px;
+      overflow-y: auto;
+      font-size: 12px;
+      line-height: 1.7;
+      color: var(--green);
+      scroll-behavior: smooth;
+    }
+
+    .log-box::-webkit-scrollbar { width: 4px; }
+    .log-box::-webkit-scrollbar-track { background: transparent; }
+    .log-box::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+    .log-line { display: block; }
+    .log-line.error { color: var(--red); }
+    .log-line.muted { color: var(--muted); }
+
+    /* ── done banner ── */
+    .done-banner {
+      display: none;
+      margin-top: 16px;
+      padding: 12px 16px;
+      border: 1px solid var(--green);
+      border-radius: 2px;
+      color: var(--green);
+      font-size: 12px;
+      letter-spacing: 0.05em;
+      text-align: center;
+    }
+
+    .done-banner.show { display: block; }
+  </style>
+</head>
+<body>
+<div class="page">
+
+  <header class="header">
+    <div class="logo">HYPE<span>BOT</span></div>
+    <p class="tagline">Smash Ultimate · Auto Clipper · Shorts Generator</p>
+  </header>
+
+  <div class="card">
+    <div class="input-row">
+      <input
+        id="urlInput"
+        class="url-input"
+        type="text"
+        placeholder="Paste YouTube or Twitch URL..."
+        autocomplete="off"
+        spellcheck="false"
+      />
+      <button id="goBtn" class="go-btn" onclick="startPipeline()">GENERATE</button>
+    </div>
+
+    <div class="progress-wrap" id="progressWrap">
+      <div class="progress-bar" id="progressBar"></div>
+    </div>
+
+    <div class="log-label">Log</div>
+    <div class="log-box" id="logBox"></div>
+
+    <div class="done-banner" id="doneBanner">
+      ✅ &nbsp; Clips generated — check your clips folder
+    </div>
+  </div>
+
+</div>
+
+<script>
+  let eventSource = null;
+
+  function startPipeline() {
+    const url = document.getElementById('urlInput').value.trim();
+    if (!url) return;
+
+    const btn       = document.getElementById('goBtn');
+    const logBox    = document.getElementById('logBox');
+    const progress  = document.getElementById('progressWrap');
+    const banner    = document.getElementById('doneBanner');
+
+    // Reset UI
+    btn.disabled = true;
+    btn.textContent = 'WORKING...';
+    logBox.innerHTML = '';
+    progress.classList.add('active');
+    banner.classList.remove('show');
+
+    // Close any existing SSE connection
+    if (eventSource) eventSource.close();
+
+    // Open log stream BEFORE posting so we don't miss early messages
+    eventSource = new EventSource('/logs');
+    eventSource.onmessage = (e) => {
+      const msg = e.data;
+      if (msg === '__keepalive__') return;
+
+      if (msg === '__done__') {
+        eventSource.close();
+        btn.disabled = false;
+        btn.textContent = 'GENERATE';
+        progress.classList.remove('active');
+        banner.classList.add('show');
+        return;
+      }
+
+      const line = document.createElement('span');
+      line.className = 'log-line' +
+        (msg.includes('❌') ? ' error' : '') +
+        (msg.includes('⚠️') ? ' error' : '');
+      line.textContent = msg;
+      logBox.appendChild(line);
+      logBox.appendChild(document.createElement('br'));
+      logBox.scrollTop = logBox.scrollHeight;
+    };
+
+    // Kick off the pipeline
+    fetch('/run', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url })
+    });
+  }
+
+  // Allow Enter key to trigger
+  document.getElementById('urlInput').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') startPipeline();
+  });
+</script>
+</body>
+</html>
