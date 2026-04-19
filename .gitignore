@@ -1,0 +1,6 @@
+downloads/
+clips/
+.venv/
+__pycache__/
+*.pyc
+*.mp4
