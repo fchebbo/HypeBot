@@ -1,13 +1,12 @@
-from flask import Flask, request, jsonify, render_template, Response
+from flask import Flask, request, jsonify, render_template, Response, send_from_directory
 import os
 import threading
 import queue
+import subprocess
 import yt_dlp
 from detector import detect_ko_events, cut_clips
 
 app = Flask(__name__)
-
-# Global log queue for streaming logs to the browser
 log_queue = queue.Queue()
 
 
@@ -21,23 +20,71 @@ def index():
     return render_template("index.html")
 
 
+@app.route("/browse")
+def browse():
+    ps = (
+        'Add-Type -AssemblyName System.Windows.Forms; '
+        '$d = New-Object System.Windows.Forms.OpenFileDialog; '
+        '$d.Filter = "Video Files|*.mp4;*.mkv;*.avi;*.mov|All Files|*.*"; '
+        '$d.Title = "Select VOD"; '
+        'if ($d.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { $d.FileName }'
+    )
+    try:
+        r = subprocess.run(['powershell', '-STA', '-Command', ps],
+                           capture_output=True, text=True, timeout=60)
+        path = r.stdout.strip()
+        return jsonify({'path': path or None})
+    except Exception as e:
+        return jsonify({'path': None, 'error': str(e)})
+
+
+@app.route("/clips-list")
+def clips_list():
+    root = os.path.abspath('clips')
+    sessions = []
+    if not os.path.exists(root):
+        return jsonify({'sessions': []})
+    for name in sorted(os.listdir(root), reverse=True):
+        session_path = os.path.join(root, name)
+        if not os.path.isdir(session_path):
+            continue
+        vert_dir = os.path.join(session_path, 'vertical')
+        orig_dir = os.path.join(session_path, 'original')
+        clips = []
+        if os.path.exists(vert_dir):
+            for f in sorted(os.listdir(vert_dir)):
+                if not f.endswith('.mp4'):
+                    continue
+                base = f.replace('_vertical.mp4', '')
+                orig_f = base + '_original.mp4'
+                clips.append({
+                    'name': base,
+                    'vertical': f'{name}/vertical/{f}',
+                    'original': f'{name}/original/{orig_f}' if os.path.exists(os.path.join(orig_dir, orig_f)) else None,
+                })
+        if clips:
+            sessions.append({'title': name, 'clips': clips})
+    return jsonify({'sessions': sessions})
+
+
+@app.route("/clips-serve/<path:filename>")
+def serve_clip(filename):
+    return send_from_directory(os.path.abspath('clips'), filename)
+
+
 @app.route("/run", methods=["POST"])
 def run():
     data = request.get_json()
     url = data.get("url", "").strip()
-    if not url:
-        return jsonify({"error": "No URL provided"}), 400
-
-    # Run pipeline in background thread
-    thread = threading.Thread(target=run_pipeline, args=(url,), daemon=True)
-    thread.start()
-
+    local_path = data.get("path", "").strip()
+    if not url and not local_path:
+        return jsonify({"error": "No URL or path provided"}), 400
+    threading.Thread(target=run_pipeline, args=(url, local_path), daemon=True).start()
     return jsonify({"status": "started"})
 
 
 @app.route("/logs")
 def logs():
-    """Server-Sent Events endpoint — streams log lines to the browser in real time."""
     def stream():
         while True:
             try:
@@ -48,34 +95,39 @@ def logs():
     return Response(stream(), mimetype="text/event-stream")
 
 
-def run_pipeline(url):
+def run_pipeline(url, local_path=''):
     try:
-        os.makedirs("downloads", exist_ok=True)
-
-        log("🔎  Fetching video info...")
-        video_title, expected_filename = get_video_info(url)
-
-        if not video_title:
-            log("❌  Could not fetch video info.")
-            log("__done__")
-            return
-
-        log(f"📺  Title: {video_title}")
-
-        cached_path = os.path.join("downloads", expected_filename)
-        if os.path.exists(cached_path):
-            log("✅  Already downloaded — skipping re-download.")
-            video_path = cached_path
-        else:
-            log("📥  Downloading VOD...")
-            video_path = download_vod(url)
-            if not video_path:
-                log("❌  Download failed.")
+        if local_path:
+            if not os.path.exists(local_path):
+                log(f"❌  File not found: {local_path}")
                 log("__done__")
                 return
+            video_path = local_path
+            video_title = os.path.splitext(os.path.basename(local_path))[0]
+            log(f"📂  Local file: {video_title}")
+        else:
+            os.makedirs("downloads", exist_ok=True)
+            log("🔎  Fetching video info...")
+            video_title, expected_filename = get_video_info(url)
+            if not video_title:
+                log("❌  Could not fetch video info.")
+                log("__done__")
+                return
+            log(f"📺  Title: {video_title}")
+            cached_path = os.path.join("downloads", expected_filename)
+            if os.path.exists(cached_path):
+                log("✅  Already downloaded — skipping re-download.")
+                video_path = cached_path
+            else:
+                log("📥  Downloading VOD...")
+                video_path = download_vod(url)
+                if not video_path:
+                    log("❌  Download failed.")
+                    log("__done__")
+                    return
 
         log("\n🔍  Scanning for KO flashes...")
-        events = detect_ko_events(video_path)
+        events = detect_ko_events(video_path, log_fn=log)
 
         if not events:
             log("⚠️  No KO events detected.")
@@ -84,11 +136,10 @@ def run_pipeline(url):
 
         safe_title = safe_folder_name(video_title)
         clips_dir = os.path.join("clips", safe_title)
-        log(f"\n✂️  Cutting {len(events)} clip(s)...")
-        cut_clips(video_path, events, output_dir=clips_dir)
+        cut_clips(video_path, events, output_dir=clips_dir, log_fn=log)
 
         log(f"\n✅  Done! Clips saved to: {os.path.abspath(clips_dir)}")
-        log("__done__")
+        log(f"__done__:{safe_title}")
 
     except Exception as e:
         log(f"\n❌  Error: {e}")
@@ -146,8 +197,7 @@ def download_vod(url):
 
 def safe_folder_name(title):
     invalid = r'\/:*?"<>|'
-    safe = ''.join(c for c in title if c not in invalid)
-    return safe.strip()[:80]
+    return ''.join(c for c in title if c not in invalid).strip()[:80]
 
 
 if __name__ == "__main__":
