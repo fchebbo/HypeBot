@@ -1,5 +1,6 @@
 from flask import Flask, request, jsonify, render_template, Response, send_from_directory
 import os
+import re
 import threading
 import queue
 import subprocess
@@ -54,7 +55,7 @@ def clips_list():
         orig_dir = os.path.join(session_path, 'original')
         clips = []
         if os.path.exists(vert_dir):
-            for f in sorted(os.listdir(vert_dir)):
+            for f in sorted(os.listdir(vert_dir), key=_clip_num):
                 if not f.endswith('.mp4'):
                     continue
                 base = f.replace('_vertical.mp4', '')
@@ -240,6 +241,11 @@ def download_vod(url):
     if downloads:
         return os.path.join("downloads", downloads[0])
     return None
+
+
+def _clip_num(filename):
+    m = re.search(r'clip_(\d+)_', filename)
+    return int(m.group(1)) if m else 0
 
 
 def safe_folder_name(title):

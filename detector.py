@@ -7,7 +7,7 @@ import json
 # --- Tunable constants ---
 BRIGHTNESS_THRESHOLD = 220
 MIN_FLASH_DURATION_SEC = 0.3
-FRAME_SKIP = 2
+FRAME_SKIP = 4          # grab() skips without decoding — safe to go higher
 KO_OFFSET_SEC = 6.0
 CLIP_BEFORE_SEC = 10.0
 CLIP_AFTER_SEC = 3.0
@@ -17,6 +17,7 @@ FFMPEG_TIMEOUT = 120
 BLUR_STRENGTH = 20      # Higher = more blurred background (10-30 recommended)
 
 SCAN_LOG_INTERVAL = 5000  # frames between scan progress updates in browser
+SCAN_RESIZE_W = 320       # resize frames to this width before brightness check
 
 
 def _cache_path(video_path):
@@ -71,12 +72,17 @@ def detect_ko_events(video_path, force_rescan=False, log_fn=print):
     last_log_frame = 0
 
     while cap.isOpened():
-        ret, frame = cap.read()
+        if frame_num % FRAME_SKIP == 0:
+            ret, frame = cap.read()
+        else:
+            ret = cap.grab()
+            frame = None
         if not ret:
             break
 
-        if frame_num % FRAME_SKIP == 0:
-            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        if frame is not None:
+            small = cv2.resize(frame, (SCAN_RESIZE_W, SCAN_RESIZE_W * frame.shape[0] // frame.shape[1]))
+            gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
             brightness = np.mean(gray)
 
             if brightness >= BRIGHTNESS_THRESHOLD:
@@ -187,7 +193,7 @@ def cut_clips(video_path, ko_events, output_dir="clips", log_fn=print):
             "-filter_complex", blur_filter,
             "-c:v", "libx264",
             "-c:a", "aac",
-            "-preset", "fast",
+            "-preset", "ultrafast",
             vertical_path,
         ]
 
@@ -198,7 +204,7 @@ def cut_clips(video_path, ko_events, output_dir="clips", log_fn=print):
             "-t", str(duration),
             "-c:v", "libx264",
             "-c:a", "aac",
-            "-preset", "fast",
+            "-preset", "ultrafast",
             original_path,
         ]
 

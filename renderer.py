@@ -185,7 +185,7 @@ def render_with_text(clip_path, above_text, below_text, output_path, log_fn=prin
         '-filter_complex', '[0:v][1:v]overlay=0:0',
         '-c:v', 'libx264',
         '-c:a', 'aac',
-        '-preset', 'fast',
+        '-preset', 'ultrafast',
         output_path,
     ]
 
