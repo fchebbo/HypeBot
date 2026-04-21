@@ -397,6 +397,64 @@
       letter-spacing: 0.1em;
     }
 
+    /* ── clip states ── */
+    .clip-card[data-state="flagged"] { border-color: #FFD700; }
+    .clip-card[data-state="flagged"]::before { background: #FFD700; }
+    .clip-card[data-state="skipped"] { opacity: 0.35; filter: grayscale(0.4); }
+    .clip-card[data-state="done"]    { border-color: var(--green); }
+    .clip-card[data-state="done"]::before { background: var(--green); }
+
+    .state-badge {
+      position: absolute;
+      top: 8px; right: 8px;
+      font-family: var(--display);
+      font-size: 11px;
+      letter-spacing: 0.08em;
+      padding: 2px 7px;
+      border-radius: 2px;
+      z-index: 2;
+    }
+    .badge-flagged { background: #FFD700; color: #000; }
+    .badge-done    { background: var(--green); color: #000; }
+
+    .state-btn {
+      background: none;
+      border: 1px solid var(--border);
+      border-radius: 2px;
+      color: var(--muted);
+      cursor: pointer;
+      font-family: var(--display);
+      font-size: 12px;
+      letter-spacing: 0.06em;
+      padding: 3px 8px;
+      transition: all 0.15s;
+    }
+    .state-btn:hover { color: var(--text); border-color: var(--muted); }
+    .state-btn.flag-active  { background: #FFD700; border-color: #FFD700; color: #000; }
+    .state-btn.skip-active  { background: var(--muted); border-color: var(--muted); color: #fff; }
+
+    /* ── filter bar ── */
+    .filter-bar {
+      display: flex;
+      gap: 6px;
+      margin-bottom: 16px;
+      flex-wrap: wrap;
+    }
+    .filter-btn {
+      background: none;
+      border: 1px solid var(--border);
+      border-radius: 2px;
+      color: var(--muted);
+      cursor: pointer;
+      font-family: var(--display);
+      font-size: 13px;
+      letter-spacing: 0.08em;
+      padding: 4px 14px;
+      transition: all 0.15s;
+    }
+    .filter-btn:hover { color: var(--text); }
+    .filter-btn.active { border-color: var(--red); color: var(--text); }
+
     /* ── text panel ── */
     .text-panel {
       display: none;
@@ -532,6 +590,12 @@
       <div class="session-tabs" id="sessionTabs"></div>
       <button class="icon-btn" onclick="loadClips(null)" title="Refresh">↻</button>
     </div>
+    <div class="filter-bar" id="filterBar">
+      <button class="filter-btn active" data-filter="all"        onclick="setFilter('all')">ALL</button>
+      <button class="filter-btn"        data-filter="flagged"    onclick="setFilter('flagged')">⭐ FLAGGED</button>
+      <button class="filter-btn"        data-filter="unreviewed" onclick="setFilter('unreviewed')">UNREVIEWED</button>
+      <button class="filter-btn"        data-filter="skipped"    onclick="setFilter('skipped')">SKIPPED</button>
+    </div>
     <div class="clips-grid" id="clipsGrid">
       <div class="empty-state">No clips found.</div>
     </div>
@@ -545,6 +609,7 @@
   let currentMode = 'url';
   let allSessions = [];
   let currentSessionIdx = 0;
+  let currentFilter = 'all';
 
   // ── mode toggle ──────────────────────────────────────────────
   function setMode(mode) {
@@ -661,10 +726,34 @@
 
   function selectSession(idx) {
     currentSessionIdx = idx;
+    currentFilter = 'all';
+    document.querySelectorAll('.filter-btn').forEach(b => {
+      b.classList.toggle('active', b.dataset.filter === 'all');
+    });
     document.querySelectorAll('.session-tab').forEach((b, i) => {
       b.classList.toggle('active', i === idx);
     });
     renderClips(allSessions[idx]);
+  }
+
+  // ── filter ───────────────────────────────────────────────────
+  function setFilter(f) {
+    currentFilter = f;
+    document.querySelectorAll('.filter-btn').forEach(b => {
+      b.classList.toggle('active', b.dataset.filter === f);
+    });
+    applyFilter();
+  }
+
+  function applyFilter() {
+    document.querySelectorAll('#clipsGrid .clip-card').forEach(card => {
+      const state = card.dataset.state || 'default';
+      let show = true;
+      if (currentFilter === 'flagged')    show = state === 'flagged';
+      if (currentFilter === 'unreviewed') show = state === 'default';
+      if (currentFilter === 'skipped')    show = state === 'skipped';
+      card.style.display = show ? '' : 'none';
+    });
   }
 
   function renderClips(session) {
@@ -684,6 +773,7 @@
 
     if (session.clips.length) {
       session.clips.forEach(clip => grid.appendChild(makeClipCard(clip)));
+      applyFilter();
     } else {
       const empty = document.createElement('div');
       empty.className = 'empty-state';
@@ -701,6 +791,36 @@
     }
   }
 
+  async function setClipState(session, clipName, newState, card, flagBtn, skipBtn) {
+    await fetch(`/review-state/${encodeURIComponent(session)}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ clip: clipName, state: newState }),
+    });
+
+    // Keep in-memory session data in sync so switching sessions preserves state
+    const sessionObj = allSessions.find(s => s.title === session);
+    if (sessionObj) {
+      const clip = sessionObj.clips.find(c => c.name === clipName);
+      if (clip) clip.state = newState;
+    }
+    card.dataset.state = newState;
+
+    // Update badge
+    const existing = card.querySelector('.state-badge');
+    if (existing) existing.remove();
+    if (newState === 'flagged') {
+      const b = document.createElement('div');
+      b.className = 'state-badge badge-flagged';
+      b.textContent = '⭐ FLAGGED';
+      card.insertBefore(b, card.firstChild);
+    }
+
+    flagBtn.className = 'state-btn' + (newState === 'flagged' ? ' flag-active' : '');
+    skipBtn.className = 'state-btn' + (newState === 'skipped' ? ' skip-active' : '');
+    applyFilter();
+  }
+
   function encodePath(p) {
     return p.split('/').map(encodeURIComponent).join('/');
   }
@@ -715,8 +835,23 @@
   }
 
   function makeClipCard(clip) {
+    const session = allSessions[currentSessionIdx].title;
     const card = document.createElement('div');
     card.className = 'clip-card';
+    card.dataset.state = clip.state || 'default';
+
+    // ── state badge ──
+    if (clip.state === 'flagged') {
+      const b = document.createElement('div');
+      b.className = 'state-badge badge-flagged';
+      b.textContent = '⭐ FLAGGED';
+      card.appendChild(b);
+    } else if (clip.state === 'done') {
+      const b = document.createElement('div');
+      b.className = 'state-badge badge-done';
+      b.textContent = '✓ DONE';
+      card.appendChild(b);
+    }
 
     const wrap = document.createElement('div');
     wrap.className = 'clip-video-wrap';
@@ -758,6 +893,30 @@
         vertBtn.classList.remove('active');
       });
       toggle.appendChild(origBtn);
+    }
+
+    // ── flag / skip ──
+    if (clip.state !== 'done') {
+      const flagBtn = document.createElement('button');
+      flagBtn.className = 'state-btn' + (clip.state === 'flagged' ? ' flag-active' : '');
+      flagBtn.textContent = '⭐';
+      flagBtn.title = 'Flag';
+      flagBtn.addEventListener('click', async () => {
+        const newState = card.dataset.state === 'flagged' ? 'default' : 'flagged';
+        await setClipState(session, clip.name, newState, card, flagBtn, skipBtn, null);
+      });
+
+      const skipBtn = document.createElement('button');
+      skipBtn.className = 'state-btn' + (clip.state === 'skipped' ? ' skip-active' : '');
+      skipBtn.textContent = '✕';
+      skipBtn.title = 'Skip';
+      skipBtn.addEventListener('click', async () => {
+        const newState = card.dataset.state === 'skipped' ? 'default' : 'skipped';
+        await setClipState(session, clip.name, newState, card, flagBtn, skipBtn, null);
+      });
+
+      toggle.appendChild(flagBtn);
+      toggle.appendChild(skipBtn);
     }
 
     // ── add text toggle ──

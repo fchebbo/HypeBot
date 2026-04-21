@@ -1,4 +1,5 @@
 from flask import Flask, request, jsonify, render_template, Response, send_from_directory
+import json
 import os
 import re
 import threading
@@ -51,30 +52,77 @@ def clips_list():
         session_path = os.path.join(root, name)
         if not os.path.isdir(session_path):
             continue
-        vert_dir = os.path.join(session_path, 'vertical')
-        orig_dir = os.path.join(session_path, 'original')
+        vert_dir   = os.path.join(session_path, 'vertical')
+        orig_dir   = os.path.join(session_path, 'original')
+        finals_dir = os.path.join(session_path, 'finals')
+
+        # Load persisted review states
+        review_path = os.path.join(session_path, 'review.json')
+        review_states = {}
+        if os.path.exists(review_path):
+            try:
+                with open(review_path) as f:
+                    review_states = json.load(f)
+            except Exception:
+                pass
+
         clips = []
         if os.path.exists(vert_dir):
             for f in sorted(os.listdir(vert_dir), key=_clip_num):
                 if not f.endswith('.mp4'):
                     continue
-                base = f.replace('_vertical.mp4', '')
-                orig_f = base + '_original.mp4'
+                base    = f.replace('_vertical.mp4', '')
+                orig_f  = base + '_original.mp4'
+                final_f = base + '_final.mp4'
+                has_final = os.path.exists(os.path.join(finals_dir, final_f)) if os.path.exists(finals_dir) else False
+                state   = 'done' if has_final else review_states.get(base, 'default')
                 clips.append({
-                    'name': base,
+                    'name':     base,
                     'vertical': f'{name}/vertical/{f}',
                     'original': f'{name}/original/{orig_f}' if os.path.exists(os.path.join(orig_dir, orig_f)) else None,
+                    'state':    state,
                 })
-        finals_dir = os.path.join(session_path, 'finals')
+
         finals = []
         if os.path.exists(finals_dir):
-            for f in sorted(os.listdir(finals_dir)):
+            for f in sorted(os.listdir(finals_dir), key=_clip_num):
                 if f.endswith('.mp4'):
                     finals.append(f'{name}/finals/{f}')
 
         if clips or finals:
             sessions.append({'title': name, 'clips': clips, 'finals': finals})
     return jsonify({'sessions': sessions})
+
+
+@app.route("/review-state/<path:session>", methods=["POST"])
+def set_review_state(session):
+    data      = request.get_json()
+    clip_name = data.get("clip", "").strip()
+    state     = data.get("state", "default")
+
+    if not clip_name:
+        return jsonify({"error": "No clip specified"}), 400
+
+    clips_root  = os.path.abspath("clips")
+    review_path = os.path.join(clips_root, session, "review.json")
+
+    states = {}
+    if os.path.exists(review_path):
+        try:
+            with open(review_path) as f:
+                states = json.load(f)
+        except Exception:
+            pass
+
+    if state == "default":
+        states.pop(clip_name, None)
+    else:
+        states[clip_name] = state
+
+    with open(review_path, "w") as f:
+        json.dump(states, f, indent=2)
+
+    return jsonify({"ok": True})
 
 
 @app.route("/render-text", methods=["POST"])
