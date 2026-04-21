@@ -5,8 +5,9 @@ import os
 import json
 
 # --- Tunable constants ---
-BRIGHTNESS_THRESHOLD = 220
+BRIGHTNESS_THRESHOLD = 180
 MIN_FLASH_DURATION_SEC = 0.3
+MAX_FLASH_DURATION_SEC = 2.0
 FRAME_SKIP = 4          # grab() skips without decoding — safe to go higher
 KO_OFFSET_SEC = 6.0
 CLIP_BEFORE_SEC = 10.0
@@ -18,6 +19,13 @@ BLUR_STRENGTH = 20      # Higher = more blurred background (10-30 recommended)
 
 SCAN_LOG_INTERVAL = 5000  # frames between scan progress updates in browser
 SCAN_RESIZE_W = 320       # resize frames to this width before brightness check
+
+
+def _fmt_ts(seconds):
+    h = int(seconds // 3600)
+    m = int((seconds % 3600) // 60)
+    s = seconds % 60
+    return f"{h}:{m:02d}:{s:05.2f}"
 
 
 def _cache_path(video_path):
@@ -92,7 +100,7 @@ def detect_ko_events(video_path, force_rescan=False, log_fn=print):
             else:
                 if in_flash:
                     flash_duration_sec = (frame_num - flash_start_frame) / fps
-                    if flash_duration_sec >= MIN_FLASH_DURATION_SEC:
+                    if MIN_FLASH_DURATION_SEC <= flash_duration_sec <= MAX_FLASH_DURATION_SEC:
                         victory_timestamp = flash_start_frame / fps
                         ko_timestamp = max(0, victory_timestamp - KO_OFFSET_SEC)
                         ko_events.append({
@@ -100,9 +108,9 @@ def detect_ko_events(video_path, force_rescan=False, log_fn=print):
                             'victory_flash_timestamp': victory_timestamp,
                             'flash_duration_seconds': flash_duration_sec,
                         })
-                        ko_mins = int(ko_timestamp // 60)
-                        ko_secs = ko_timestamp % 60
-                        log_fn(f"  ⚡  KO detected at {ko_mins}m {ko_secs:.1f}s (flash: {flash_duration_sec:.2f}s)")
+                        log_fn(f"  ⚡  KO detected at {_fmt_ts(ko_timestamp)} (flash: {flash_duration_sec:.2f}s)")
+                    elif flash_duration_sec > MAX_FLASH_DURATION_SEC:
+                        log_fn(f"  ⏭️  Flash too long ({flash_duration_sec:.2f}s) at {_fmt_ts(flash_start_frame / fps)} — skipped")
                     in_flash = False
 
         frame_num += 1
@@ -175,14 +183,15 @@ def cut_clips(video_path, ko_events, output_dir="clips", log_fn=print):
         start = max(0, event['ko_timestamp'] - CLIP_BEFORE_SEC)
         duration = CLIP_BEFORE_SEC + CLIP_AFTER_SEC
 
-        ko_mins = int(event['ko_timestamp'] // 60)
-        ko_secs = event['ko_timestamp'] % 60
+        ko_ts = event['ko_timestamp']
+        ko_mins = int(ko_ts // 60)
+        ko_secs = ko_ts % 60
         clip_name = f"clip_{i+1}_{ko_mins}m{int(ko_secs)}s"
 
         vertical_path = os.path.join(vertical_dir, f"{clip_name}_vertical.mp4")
         original_path = os.path.join(original_dir, f"{clip_name}_original.mp4")
 
-        log_fn(f"\n  [{i+1}/{len(ko_events)}]  Game {i+1}  @  {ko_mins}m {ko_secs:.1f}s")
+        log_fn(f"\n  [{i+1}/{len(ko_events)}]  Game {i+1}  @  {_fmt_ts(ko_ts)}")
         log_fn(f"    🎬  Rendering vertical (9:16)...")
 
         vertical_cmd = [
