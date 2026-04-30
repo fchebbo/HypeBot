@@ -2,6 +2,7 @@ from flask import Flask, request, jsonify, render_template, Response, send_from_
 import json
 import os
 import re
+import shutil
 import threading
 import queue
 import subprocess
@@ -21,6 +22,18 @@ def log(msg):
 @app.route("/")
 def index():
     return render_template("index.html")
+
+
+@app.route("/upload", methods=["POST"])
+def upload_file():
+    f = request.files.get("file")
+    if not f or not f.filename:
+        return jsonify({"error": "No file"}), 400
+    os.makedirs("downloads", exist_ok=True)
+    safe_name = os.path.basename(f.filename)
+    dest = os.path.join(os.path.abspath("downloads"), safe_name)
+    f.save(dest)
+    return jsonify({"path": dest})
 
 
 @app.route("/browse")
@@ -51,6 +64,8 @@ def clips_list():
     for name in sorted(os.listdir(root), reverse=True):
         session_path = os.path.join(root, name)
         if not os.path.isdir(session_path):
+            continue
+        if name == 'archived':
             continue
         vert_dir   = os.path.join(session_path, 'vertical')
         orig_dir   = os.path.join(session_path, 'original')
@@ -91,7 +106,15 @@ def clips_list():
 
         if clips or finals:
             sessions.append({'title': name, 'clips': clips, 'finals': finals})
-    return jsonify({'sessions': sessions})
+
+    archived = []
+    archived_root = os.path.join(root, 'archived')
+    if os.path.exists(archived_root):
+        for name in sorted(os.listdir(archived_root), reverse=True):
+            if os.path.isdir(os.path.join(archived_root, name)):
+                archived.append(name)
+
+    return jsonify({'sessions': sessions, 'archived': archived})
 
 
 @app.route("/review-state/<path:session>", methods=["POST"])
@@ -122,6 +145,28 @@ def set_review_state(session):
     with open(review_path, "w") as f:
         json.dump(states, f, indent=2)
 
+    return jsonify({"ok": True})
+
+
+@app.route("/unarchive/<path:session>", methods=["POST"])
+def unarchive_session(session):
+    clips_root = os.path.abspath("clips")
+    src = os.path.join(clips_root, "archived", session)
+    if not os.path.exists(src):
+        return jsonify({"error": "Session not found"}), 404
+    shutil.move(src, os.path.join(clips_root, session))
+    return jsonify({"ok": True})
+
+
+@app.route("/archive/<path:session>", methods=["POST"])
+def archive_session(session):
+    clips_root = os.path.abspath("clips")
+    src = os.path.join(clips_root, session)
+    if not os.path.exists(src):
+        return jsonify({"error": "Session not found"}), 404
+    dest_dir = os.path.join(clips_root, "archived")
+    os.makedirs(dest_dir, exist_ok=True)
+    shutil.move(src, os.path.join(dest_dir, session))
     return jsonify({"ok": True})
 
 
@@ -298,7 +343,8 @@ def _clip_num(filename):
 
 def safe_folder_name(title):
     invalid = r'\/:*?"<>|'
-    return ''.join(c for c in title if c not in invalid).strip()[:80]
+    cleaned = ''.join(c for c in title if c not in invalid).strip()[:80]
+    return cleaned.rstrip('. ')
 
 
 if __name__ == "__main__":

@@ -4,6 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>HypeBot</title>
+  <link rel="icon" type="image/png" href="/static/favicon.png"/>
   <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet"/>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -179,6 +180,45 @@
       flex-shrink: 0;
     }
     .browse-btn:hover { border-color: var(--muted); }
+
+    /* ── drop zone ── */
+    .drop-zone {
+      border: 2px dashed var(--border);
+      border-radius: 2px;
+      padding: 28px 20px;
+      text-align: center;
+      color: var(--muted);
+      font-size: 12px;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      cursor: default;
+      transition: border-color 0.15s, color 0.15s;
+      margin-bottom: 20px;
+      position: relative;
+      overflow: hidden;
+    }
+    .drop-zone.drag-over {
+      border-color: var(--red);
+      color: var(--text);
+    }
+    .drop-zone.uploading {
+      border-color: var(--red);
+      color: var(--text);
+    }
+    .drop-zone-sub {
+      font-size: 10px;
+      margin-top: 6px;
+      letter-spacing: 0.1em;
+      opacity: 0.5;
+    }
+    .drop-progress-bar {
+      position: absolute;
+      bottom: 0; left: 0;
+      height: 3px;
+      width: 0%;
+      background: var(--red);
+      transition: width 0.1s linear;
+    }
 
     /* ── progress bar ── */
     .progress-wrap {
@@ -517,6 +557,62 @@
       grid-column: 1 / -1;
     }
 
+    /* ── archived section ── */
+    .archived-section {
+      width: 100%;
+      max-width: 960px;
+    }
+    .archived-toggle {
+      background: none;
+      border: 1px solid var(--border);
+      border-radius: 2px;
+      color: var(--muted);
+      cursor: pointer;
+      font-family: var(--display);
+      font-size: 14px;
+      letter-spacing: 0.1em;
+      padding: 6px 16px;
+      transition: color 0.15s, border-color 0.15s;
+    }
+    .archived-toggle:hover { color: var(--text); border-color: var(--muted); }
+    .archived-toggle.has-items { color: var(--text); }
+
+    .archived-list {
+      display: none;
+      margin-top: 12px;
+      border: 1px solid var(--border);
+      border-radius: 2px;
+      overflow: hidden;
+    }
+    .archived-list.open { display: block; }
+
+    .archived-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px 16px;
+      border-bottom: 1px solid var(--border);
+      font-size: 12px;
+      letter-spacing: 0.04em;
+    }
+    .archived-row:last-child { border-bottom: none; }
+    .archived-row:hover { background: var(--surface); }
+
+    .restore-btn {
+      background: none;
+      border: 1px solid var(--border);
+      border-radius: 2px;
+      color: var(--muted);
+      cursor: pointer;
+      font-family: var(--display);
+      font-size: 11px;
+      letter-spacing: 0.08em;
+      padding: 3px 10px;
+      transition: all 0.15s;
+      flex-shrink: 0;
+    }
+    .restore-btn:hover { color: var(--text); border-color: var(--muted); }
+
     .final-badge {
       position: absolute;
       top: 8px;
@@ -572,6 +668,12 @@
       <button id="goBtnFile" class="go-btn" onclick="startPipeline()">GENERATE</button>
     </div>
 
+    <div id="dropZone" class="drop-zone" style="display:none">
+      <div id="dropZoneText">DROP VIDEO FILE HERE</div>
+      <div class="drop-zone-sub" id="dropZoneSub">mp4 · mkv · avi · mov</div>
+      <div class="drop-progress-bar" id="dropProgressBar"></div>
+    </div>
+
     <div class="progress-wrap" id="progressWrap">
       <div class="progress-bar"></div>
     </div>
@@ -584,11 +686,17 @@
 
   <button class="review-trigger" onclick="loadClips(null)">Review previous clips ↓</button>
 
+  <div class="archived-section" id="archivedSection" style="display:none">
+    <button class="archived-toggle" id="archivedToggle" onclick="toggleArchived()">ARCHIVED (0)</button>
+    <div class="archived-list" id="archivedList"></div>
+  </div>
+
   <section class="review" id="reviewSection">
     <div class="review-top">
       <span class="section-heading">CLIPS</span>
       <div class="session-tabs" id="sessionTabs"></div>
       <button class="icon-btn" onclick="loadClips(null)" title="Refresh">↻</button>
+      <button class="icon-btn" id="archiveBtn" onclick="archiveSession()" title="Archive current session" style="font-size:14px;letter-spacing:0.06em;font-family:var(--display)">ARCHIVE</button>
     </div>
     <div class="filter-bar" id="filterBar">
       <button class="filter-btn active" data-filter="all"        onclick="setFilter('all')">ALL</button>
@@ -618,7 +726,83 @@
     document.getElementById('tabFile').classList.toggle('active', mode === 'file');
     document.getElementById('urlRow').style.display  = mode === 'url'  ? 'flex' : 'none';
     document.getElementById('fileRow').style.display = mode === 'file' ? 'flex' : 'none';
+    document.getElementById('dropZone').style.display = mode === 'file' ? 'block' : 'none';
   }
+
+  // ── drag & drop upload ────────────────────────────────────────
+  (function initDropZone() {
+    const zone    = document.getElementById('dropZone');
+    const text    = document.getElementById('dropZoneText');
+    const sub     = document.getElementById('dropZoneSub');
+    const bar     = document.getElementById('dropProgressBar');
+    const input   = document.getElementById('fileInput');
+    const allowed = new Set(['mp4','mkv','avi','mov','webm']);
+
+    function ext(name) { return name.split('.').pop().toLowerCase(); }
+
+    zone.addEventListener('dragover', e => {
+      e.preventDefault();
+      zone.classList.add('drag-over');
+    });
+    zone.addEventListener('dragleave', () => zone.classList.remove('drag-over'));
+    zone.addEventListener('drop', e => {
+      e.preventDefault();
+      zone.classList.remove('drag-over');
+      const file = e.dataTransfer.files[0];
+      if (!file) return;
+      if (!allowed.has(ext(file.name))) {
+        text.textContent = '⚠  Not a video file';
+        sub.textContent  = 'Drop an mp4, mkv, avi, or mov';
+        return;
+      }
+      uploadFile(file);
+    });
+
+    function uploadFile(file) {
+      zone.classList.add('uploading');
+      text.textContent = `Uploading ${file.name}…`;
+      sub.textContent  = '';
+      bar.style.width  = '0%';
+
+      const fd  = new FormData();
+      fd.append('file', file);
+      const xhr = new XMLHttpRequest();
+
+      xhr.upload.addEventListener('progress', e => {
+        if (e.lengthComputable) {
+          bar.style.width = Math.round(e.loaded / e.total * 100) + '%';
+        }
+      });
+
+      xhr.addEventListener('load', () => {
+        zone.classList.remove('uploading');
+        bar.style.width = '100%';
+        try {
+          const data = JSON.parse(xhr.responseText);
+          if (data.path) {
+            input.value     = data.path;
+            text.textContent = '✅  ' + file.name;
+            sub.textContent  = 'Ready — click GENERATE';
+          } else {
+            text.textContent = '❌  Upload failed';
+            sub.textContent  = data.error || '';
+          }
+        } catch {
+          text.textContent = '❌  Upload error';
+        }
+        setTimeout(() => { bar.style.width = '0%'; }, 1000);
+      });
+
+      xhr.addEventListener('error', () => {
+        zone.classList.remove('uploading');
+        text.textContent = '❌  Upload failed';
+        sub.textContent  = '';
+      });
+
+      xhr.open('POST', '/upload');
+      xhr.send(fd);
+    }
+  })();
 
   // ── file browse ──────────────────────────────────────────────
   async function browseFile() {
@@ -689,6 +873,7 @@
     const res  = await fetch('/clips-list');
     const data = await res.json();
     allSessions = data.sessions;
+    renderArchived(data.archived || []);
 
     renderSessionTabs();
 
@@ -1033,6 +1218,76 @@
     const m = name.match(/clip_(\d+)_(\d+)m(\d+)s/);
     if (m) return `Game ${m[1]}  ·  ${m[2]}:${m[3].padStart(2, '0')}`;
     return name;
+  }
+
+  // ── archived section ──────────────────────────────────────────
+  function renderArchived(titles) {
+    const section = document.getElementById('archivedSection');
+    const toggle  = document.getElementById('archivedToggle');
+    const list    = document.getElementById('archivedList');
+
+    if (titles.length === 0) {
+      section.style.display = 'none';
+      return;
+    }
+
+    section.style.display = 'block';
+    toggle.textContent = `ARCHIVED (${titles.length})`;
+    toggle.classList.toggle('has-items', titles.length > 0);
+
+    list.innerHTML = '';
+    titles.forEach(title => {
+      const row = document.createElement('div');
+      row.className = 'archived-row';
+
+      const name = document.createElement('span');
+      name.textContent = title;
+      row.appendChild(name);
+
+      const btn = document.createElement('button');
+      btn.className = 'restore-btn';
+      btn.textContent = 'RESTORE';
+      btn.addEventListener('click', async () => {
+        btn.disabled = true;
+        btn.textContent = '...';
+        const res = await fetch(`/unarchive/${encodeURIComponent(title)}`, { method: 'POST' });
+        const data = await res.json();
+        if (data.ok) {
+          await loadClips(title);
+        } else {
+          btn.disabled = false;
+          btn.textContent = 'RESTORE';
+          alert('Restore failed: ' + (data.error || 'unknown'));
+        }
+      });
+      row.appendChild(btn);
+      list.appendChild(row);
+    });
+  }
+
+  function toggleArchived() {
+    document.getElementById('archivedList').classList.toggle('open');
+  }
+
+  // ── archive ───────────────────────────────────────────────────
+  async function archiveSession() {
+    if (allSessions.length === 0) return;
+    const session = allSessions[currentSessionIdx];
+    if (!confirm(`Archive "${session.title}"?\n\nIt will be moved to clips/archived/ and removed from the review list.`)) return;
+    const btn = document.getElementById('archiveBtn');
+    btn.disabled = true;
+    try {
+      const res = await fetch(`/archive/${encodeURIComponent(session.title)}`, { method: 'POST' });
+      const data = await res.json();
+      if (data.ok) {
+        await loadClips(null);
+      } else {
+        alert('Archive failed: ' + (data.error || 'unknown error'));
+      }
+    } catch (e) {
+      alert('Archive request failed.');
+    }
+    btn.disabled = false;
   }
 
   // ── key shortcuts ─────────────────────────────────────────────

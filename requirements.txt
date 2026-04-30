@@ -1,0 +1,5 @@
+flask
+yt-dlp
+opencv-python
+numpy
+Pillow
