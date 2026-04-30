@@ -9,7 +9,7 @@
   ![FFmpeg](https://img.shields.io/badge/FFmpeg-video%20engine-green?style=flat-square&logo=ffmpeg)
   ![Smash Ultimate](https://img.shields.io/badge/Smash-Ultimate-red?style=flat-square)
 
-  **[GitHub](https://github.com/fchebbo/HypeBot)**
+  **[GitHub](https://github.com/fchebbo/HypeBot)** · Powering **[SoCal Smash](https://www.youtube.com/@SoCalSmash)** on YouTube
 </div>
 
 ---
