@@ -3,11 +3,12 @@ import numpy as np
 import subprocess
 import os
 import json
+from collections import deque
 
 # --- Tunable constants ---
-BRIGHTNESS_THRESHOLD = 180
+# BRIGHTNESS_THRESHOLD retired — replaced by BRIGHT_PIXEL_RATIO check below
 MIN_FLASH_DURATION_SEC = 0.3
-MAX_FLASH_DURATION_SEC = 2.0
+MAX_FLASH_DURATION_SEC = 1.5
 FRAME_SKIP = 4          # grab() skips without decoding — safe to go higher
 KO_OFFSET_SEC = 6.0
 CLIP_BEFORE_SEC = 10.0
@@ -19,6 +20,11 @@ BLUR_STRENGTH = 20      # Higher = more blurred background (10-30 recommended)
 
 SCAN_LOG_INTERVAL = 5000  # frames between scan progress updates in browser
 SCAN_RESIZE_W = 320       # resize frames to this width before brightness check
+BRIGHT_PIXEL_THRESHOLD = 185   # minimum per-channel brightness to count as "white"
+BRIGHT_PIXEL_SPREAD    = 40    # max channel spread (R-B etc) — filters pink/yellow/colored effects
+BRIGHT_PIXEL_RATIO     = 0.55  # fraction of true-white pixels required to trigger
+FLASH_SPIKE            = 0.30  # how much above rolling baseline the ratio must jump to trigger
+ROLLING_WINDOW         = 40    # decoded frames to track for baseline (~3-4s at FRAME_SKIP=4, 30fps)
 
 
 def _fmt_ts(seconds):
@@ -59,7 +65,21 @@ def _save_cache(video_path, events, log_fn=print):
         log_fn(f"⚠️  Could not save cache: {e}")
 
 
-def detect_ko_events(video_path, force_rescan=False, log_fn=print):
+def dump_frame_at(video_path, target_sec, out_path="debug_frame.png", log_fn=print):
+    cap = cv2.VideoCapture(video_path)
+    fps = cap.get(cv2.CAP_PROP_FPS)
+    target_frame = int(target_sec * fps)
+    cap.set(cv2.CAP_PROP_POS_FRAMES, target_frame)
+    ret, frame = cap.read()
+    cap.release()
+    if ret:
+        cv2.imwrite(out_path, frame)
+        log_fn(f"🖼  Frame at {target_sec}s saved to {out_path}")
+    else:
+        log_fn(f"❌  Could not extract frame at {target_sec}s")
+
+
+def detect_ko_events(video_path, force_rescan=False, log_fn=print, max_scan_sec=None):
     if not force_rescan:
         cached = _load_cache(video_path, log_fn)
         if cached is not None:
@@ -75,9 +95,10 @@ def detect_ko_events(video_path, force_rescan=False, log_fn=print):
 
     ko_events = []
     in_flash = False
-    flash_start_frame = 0
+    flash_start_pts = 0.0
     frame_num = 0
     last_log_frame = 0
+    baseline_window = deque(maxlen=ROLLING_WINDOW)
 
     while cap.isOpened():
         if frame_num % FRAME_SKIP == 0:
@@ -88,37 +109,52 @@ def detect_ko_events(video_path, force_rescan=False, log_fn=print):
         if not ret:
             break
 
+        current_pts = cap.get(cv2.CAP_PROP_POS_MSEC) / 1000.0
+
         if frame is not None:
             small = cv2.resize(frame, (SCAN_RESIZE_W, SCAN_RESIZE_W * frame.shape[0] // frame.shape[1]))
-            gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
-            brightness = np.mean(gray)
+            # Full-width horizontal band through the middle of the frame.
+            # Avoids top/bottom HUD. Works regardless of black sidebars or logo position.
+            h, w = small.shape[:2]
+            vy0, vy1 = int(h * 0.30), int(h * 0.70)
+            sample = small[vy0:vy1, :].reshape(-1, 3)
+            min_ch = np.min(sample, axis=1)
+            max_ch = np.max(sample, axis=1)
+            is_white = (min_ch >= BRIGHT_PIXEL_THRESHOLD) & ((max_ch - min_ch) <= BRIGHT_PIXEL_SPREAD)
+            white_ratio = np.mean(is_white)
 
-            if brightness >= BRIGHTNESS_THRESHOLD:
+            baseline = np.mean(baseline_window) if len(baseline_window) >= 5 else 0.0
+            is_flash_frame = white_ratio >= BRIGHT_PIXEL_RATIO and (white_ratio - baseline) >= FLASH_SPIKE
+            if not in_flash:
+                baseline_window.append(white_ratio)
+
+            if is_flash_frame:
                 if not in_flash:
                     in_flash = True
-                    flash_start_frame = frame_num
+                    flash_start_pts = current_pts
             else:
                 if in_flash:
-                    flash_duration_sec = (frame_num - flash_start_frame) / fps
+                    flash_duration_sec = current_pts - flash_start_pts
                     if MIN_FLASH_DURATION_SEC <= flash_duration_sec <= MAX_FLASH_DURATION_SEC:
-                        victory_timestamp = flash_start_frame / fps
-                        ko_timestamp = max(0, victory_timestamp - KO_OFFSET_SEC)
+                        ko_timestamp = max(0, flash_start_pts - KO_OFFSET_SEC)
                         ko_events.append({
                             'ko_timestamp': ko_timestamp,
-                            'victory_flash_timestamp': victory_timestamp,
+                            'victory_flash_timestamp': flash_start_pts,
                             'flash_duration_seconds': flash_duration_sec,
                         })
                         log_fn(f"  ⚡  KO detected at {_fmt_ts(ko_timestamp)} (flash: {flash_duration_sec:.2f}s)")
                     elif flash_duration_sec > MAX_FLASH_DURATION_SEC:
-                        log_fn(f"  ⏭️  Flash too long ({flash_duration_sec:.2f}s) at {_fmt_ts(flash_start_frame / fps)} — skipped")
+                        log_fn(f"  ⏭️  Flash too long ({flash_duration_sec:.2f}s) at {_fmt_ts(flash_start_pts)} — skipped")
                     in_flash = False
 
         frame_num += 1
+        if max_scan_sec is not None and current_pts > max_scan_sec:
+            log_fn(f"  ⏹️  Scan limit reached ({max_scan_sec}s) — stopping early.")
+            break
         if frame_num - last_log_frame >= SCAN_LOG_INTERVAL:
             pct = (frame_num / total_frames) * 100
-            elapsed_sec = frame_num / fps
-            elapsed_min = int(elapsed_sec // 60)
-            elapsed_s = elapsed_sec % 60
+            elapsed_min = int(current_pts // 60)
+            elapsed_s = current_pts % 60
             log_fn(f"  📊  Scanning... {pct:.0f}% ({elapsed_min}m {elapsed_s:.0f}s scanned)")
             last_log_frame = frame_num
 
