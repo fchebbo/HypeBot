@@ -148,10 +148,11 @@ def _draw_bar_text(draw, text, clip_w, bar_top, bar_bottom, max_size=120, min_si
         y += line_h + line_gap
 
 
-def render_with_text(clip_path, above_text, below_text, output_path, log_fn=print):
-    cap    = cv2.VideoCapture(clip_path)
-    clip_w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-    clip_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+def render_with_text(clip_path, above_text, below_text, output_path, log_fn=print, hook=False, hook_offset=2.8):
+    cap        = cv2.VideoCapture(clip_path)
+    clip_w     = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    clip_h     = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    total_dur  = cap.get(cv2.CAP_PROP_FRAME_COUNT) / cap.get(cv2.CAP_PROP_FPS)
     cap.release()
 
     if not clip_w or not clip_h:
@@ -178,16 +179,41 @@ def render_with_text(clip_path, above_text, below_text, output_path, log_fn=prin
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
     log_fn("🎬  Encoding final clip...")
 
-    cmd = [
-        'ffmpeg', '-y',
-        '-i', clip_path,
-        '-i', tmp_path,
-        '-filter_complex', '[0:v][1:v]overlay=0:0',
-        '-c:v', 'libx264',
-        '-c:a', 'aac',
-        '-preset', 'ultrafast',
-        output_path,
-    ]
+    if hook:
+        hook_start = round(max(0.0, total_dur - hook_offset), 3)
+        log_fn(f"🪝  Hook: prepending last {hook_offset}s (from {hook_start:.2f}s)")
+        filter_complex = (
+            f"[0:v]trim=start={hook_start},setpts=PTS-STARTPTS[hv];"
+            f"[0:a]atrim=start={hook_start},asetpts=PTS-STARTPTS[ha];"
+            f"[0:v]setpts=PTS-STARTPTS[fv];"
+            f"[0:a]asetpts=PTS-STARTPTS[fa];"
+            f"[hv][fv]concat=n=2:v=1:a=0[cv];"
+            f"[ha][fa]concat=n=2:v=0:a=1[ca];"
+            f"[cv][1:v]overlay=0:0[outv]"
+        )
+        cmd = [
+            'ffmpeg', '-y',
+            '-i', clip_path,
+            '-i', tmp_path,
+            '-filter_complex', filter_complex,
+            '-map', '[outv]',
+            '-map', '[ca]',
+            '-c:v', 'libx264',
+            '-c:a', 'aac',
+            '-preset', 'ultrafast',
+            output_path,
+        ]
+    else:
+        cmd = [
+            'ffmpeg', '-y',
+            '-i', clip_path,
+            '-i', tmp_path,
+            '-filter_complex', '[0:v][1:v]overlay=0:0',
+            '-c:v', 'libx264',
+            '-c:a', 'aac',
+            '-preset', 'ultrafast',
+            output_path,
+        ]
 
     try:
         result = subprocess.run(cmd, stdout=subprocess.DEVNULL,

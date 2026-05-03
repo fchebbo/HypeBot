@@ -547,6 +547,43 @@
     .render-status.show { display: block; }
     .render-status.err  { color: var(--red); }
 
+    /* ── hook row ── */
+    .hook-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .hook-row input[type="checkbox"] {
+      accent-color: var(--red);
+      width: 14px;
+      height: 14px;
+      cursor: pointer;
+      flex-shrink: 0;
+    }
+    .hook-row label {
+      font-size: 11px;
+      letter-spacing: 0.08em;
+      color: var(--muted);
+      cursor: pointer;
+      flex: 1;
+      text-transform: uppercase;
+    }
+    .hook-offset-input {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 2px;
+      color: var(--text);
+      font-family: var(--mono);
+      font-size: 11px;
+      padding: 4px 8px;
+      outline: none;
+      width: 52px;
+      text-align: center;
+      transition: border-color 0.15s;
+    }
+    .hook-offset-input:focus { border-color: var(--red); }
+    .hook-offset-input:disabled { opacity: 0.3; }
+
     /* ── finals section ── */
     .grid-label {
       font-size: 10px;
@@ -1121,6 +1158,35 @@
     const textPanel = document.createElement('div');
     textPanel.className = 'text-panel';
 
+    const hookId = `hook-${clip.name}`;
+    const hookRow = document.createElement('div');
+    hookRow.className = 'hook-row';
+
+    const hookCheck = document.createElement('input');
+    hookCheck.type = 'checkbox';
+    hookCheck.id = hookId;
+
+    const hookLabel = document.createElement('label');
+    hookLabel.htmlFor = hookId;
+    hookLabel.textContent = 'Include KO hook';
+
+    const hookOffsetInput = document.createElement('input');
+    hookOffsetInput.className = 'hook-offset-input';
+    hookOffsetInput.type = 'number';
+    hookOffsetInput.value = '2.8';
+    hookOffsetInput.min = '0.5';
+    hookOffsetInput.max = '5.0';
+    hookOffsetInput.step = '0.1';
+    hookOffsetInput.disabled = true;
+
+    hookCheck.addEventListener('change', () => {
+      hookOffsetInput.disabled = !hookCheck.checked;
+    });
+
+    hookRow.appendChild(hookCheck);
+    hookRow.appendChild(hookLabel);
+    hookRow.appendChild(hookOffsetInput);
+
     const aboveInput = document.createElement('input');
     aboveInput.className = 'hook-input';
     aboveInput.placeholder = 'ABOVE text (optional)';
@@ -1147,9 +1213,11 @@
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            clip:  clip.vertical,
-            above: aboveInput.value.trim(),
-            below: belowInput.value.trim(),
+            clip:        clip.vertical,
+            above:       aboveInput.value.trim(),
+            below:       belowInput.value.trim(),
+            hook:        hookCheck.checked,
+            hook_offset: parseFloat(hookOffsetInput.value) || 2.8,
           }),
         });
         const data = await res.json();
@@ -1177,6 +1245,7 @@
       renderBtn.textContent = 'RENDER';
     });
 
+    textPanel.appendChild(hookRow);
     textPanel.appendChild(aboveInput);
     textPanel.appendChild(belowInput);
     textPanel.appendChild(renderBtn);

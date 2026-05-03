@@ -173,9 +173,11 @@ def archive_session(session):
 @app.route("/render-text", methods=["POST"])
 def render_text_route():
     data = request.get_json()
-    clip_rel  = data.get("clip", "").strip()
-    above     = data.get("above", "").strip()
-    below     = data.get("below", "").strip()
+    clip_rel    = data.get("clip", "").strip()
+    above       = data.get("above", "").strip()
+    below       = data.get("below", "").strip()
+    hook        = bool(data.get("hook", False))
+    hook_offset = float(data.get("hook_offset", 2.8))
 
     if not clip_rel:
         return jsonify({"error": "No clip specified"}), 400
@@ -201,7 +203,7 @@ def render_text_route():
         logs.append(msg)
         print(msg)
 
-    ok = render_with_text(clip_path, above, below, output_path, log_fn=capture)
+    ok = render_with_text(clip_path, above, below, output_path, log_fn=capture, hook=hook, hook_offset=hook_offset)
 
     if ok:
         return jsonify({"ok": True, "path": output_rel, "logs": logs})
