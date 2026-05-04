@@ -91,10 +91,12 @@ def clips_list():
                 final_f = base + '_final.mp4'
                 has_final = os.path.exists(os.path.join(finals_dir, final_f)) if os.path.exists(finals_dir) else False
                 state   = 'done' if has_final else review_states.get(base, 'default')
+                thumb_f = base + '_thumb.jpg'
                 clips.append({
                     'name':     base,
                     'vertical': f'{name}/vertical/{f}',
                     'original': f'{name}/original/{orig_f}' if os.path.exists(os.path.join(orig_dir, orig_f)) else None,
+                    'thumb':    f'{name}/vertical/{thumb_f}' if os.path.exists(os.path.join(vert_dir, thumb_f)) else None,
                     'state':    state,
                 })
 
@@ -156,6 +158,34 @@ def unarchive_session(session):
         return jsonify({"error": "Session not found"}), 404
     shutil.move(src, os.path.join(clips_root, session))
     return jsonify({"ok": True})
+
+
+@app.route("/generate-thumbs/<path:session>", methods=["POST"])
+def generate_thumbs(session):
+    clips_root = os.path.abspath("clips")
+    vert_dir = os.path.join(clips_root, session, "vertical")
+    if not os.path.exists(vert_dir):
+        return jsonify({"error": "Session not found"}), 404
+
+    generated = 0
+    for f in os.listdir(vert_dir):
+        if not f.endswith("_vertical.mp4"):
+            continue
+        base = f.replace("_vertical.mp4", "")
+        thumb_path = os.path.join(vert_dir, f"{base}_thumb.jpg")
+        if os.path.exists(thumb_path):
+            continue
+        clip_path = os.path.join(vert_dir, f)
+        result = subprocess.run([
+            "ffmpeg", "-y", "-ss", "5",
+            "-i", clip_path,
+            "-vframes", "1", "-q:v", "4",
+            thumb_path,
+        ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=15)
+        if result.returncode == 0:
+            generated += 1
+
+    return jsonify({"ok": True, "generated": generated})
 
 
 @app.route("/archive/<path:session>", methods=["POST"])

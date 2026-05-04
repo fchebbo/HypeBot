@@ -98,6 +98,7 @@ def detect_ko_events(video_path, force_rescan=False, log_fn=print, max_scan_sec=
     flash_start_pts = 0.0
     frame_num = 0
     last_log_frame = 0
+    consecutive_failures = 0
     baseline_window = deque(maxlen=ROLLING_WINDOW)
 
     while cap.isOpened():
@@ -107,7 +108,13 @@ def detect_ko_events(video_path, force_rescan=False, log_fn=print, max_scan_sec=
             ret = cap.grab()
             frame = None
         if not ret:
-            break
+            consecutive_failures += 1
+            if consecutive_failures > 30:
+                log_fn(f"⚠️  Too many consecutive read failures at {_fmt_ts(cap.get(cv2.CAP_PROP_POS_MSEC)/1000)} — stopping scan.")
+                break
+            frame_num += 1
+            continue
+        consecutive_failures = 0
 
         current_pts = cap.get(cv2.CAP_PROP_POS_MSEC) / 1000.0
 
@@ -256,6 +263,16 @@ def cut_clips(video_path, ko_events, output_dir="clips", log_fn=print):
         v_ok = run_ffmpeg(vertical_cmd, f"{clip_name}_vertical", log_fn)
         if v_ok:
             log_fn(f"    ✅  Vertical done.")
+            thumb_path = os.path.join(vertical_dir, f"{clip_name}_thumb.jpg")
+            if not os.path.exists(thumb_path):
+                run_ffmpeg([
+                    "ffmpeg", "-y",
+                    "-ss", str(5),
+                    "-i", vertical_path,
+                    "-vframes", "1",
+                    "-q:v", "4",
+                    thumb_path,
+                ], f"{clip_name}_thumb", log_fn)
         log_fn(f"    🎬  Rendering original (16:9)...")
         o_ok = run_ffmpeg(original_cmd, f"{clip_name}_original", log_fn)
         if o_ok:

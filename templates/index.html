@@ -324,9 +324,9 @@
     }
 
     .session-tabs {
-      display: flex;
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
       gap: 8px;
-      flex-wrap: wrap;
       flex: 1;
       min-width: 0;
     }
@@ -339,7 +339,6 @@
       font-family: var(--mono);
       font-size: 11px;
       padding: 4px 12px;
-      max-width: 220px;
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
@@ -365,7 +364,7 @@
     /* ── clips grid ── */
     .clips-grid {
       display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+      grid-template-columns: repeat(3, 1fr);
       gap: 16px;
     }
 
@@ -733,6 +732,7 @@
       <span class="section-heading">CLIPS</span>
       <div class="session-tabs" id="sessionTabs"></div>
       <button class="icon-btn" onclick="loadClips(null)" title="Refresh">↻</button>
+      <button class="icon-btn" id="thumbsBtn" onclick="generateThumbs()" title="Generate thumbnails for this session" style="font-size:14px;letter-spacing:0.06em;font-family:var(--display)">THUMBS</button>
       <button class="icon-btn" id="archiveBtn" onclick="archiveSession()" title="Archive current session" style="font-size:14px;letter-spacing:0.06em;font-family:var(--display)">ARCHIVE</button>
     </div>
     <div class="filter-bar" id="filterBar">
@@ -1047,12 +1047,13 @@
     return p.split('/').map(encodeURIComponent).join('/');
   }
 
-  function makeVideoEl(src) {
+  function makeVideoEl(src, thumb) {
     const video = document.createElement('video');
     video.src = '/clips-serve/' + encodePath(src);
     video.controls = true;
-    video.preload = 'metadata';
+    video.preload = thumb ? 'none' : 'metadata';
     video.playsInline = true;
+    if (thumb) video.poster = '/clips-serve/' + encodePath(thumb);
     return video;
   }
 
@@ -1077,7 +1078,7 @@
 
     const wrap = document.createElement('div');
     wrap.className = 'clip-video-wrap';
-    const video = makeVideoEl(clip.vertical);
+    const video = makeVideoEl(clip.vertical, clip.thumb);
     wrap.appendChild(video);
 
     const footer = document.createElement('div');
@@ -1336,6 +1337,29 @@
 
   function toggleArchived() {
     document.getElementById('archivedList').classList.toggle('open');
+  }
+
+  // ── generate thumbs ───────────────────────────────────────────
+  async function generateThumbs() {
+    if (allSessions.length === 0) return;
+    const session = allSessions[currentSessionIdx];
+    const btn = document.getElementById('thumbsBtn');
+    btn.disabled = true;
+    btn.textContent = '...';
+    try {
+      const res = await fetch(`/generate-thumbs/${encodeURIComponent(session.title)}`, { method: 'POST' });
+      const data = await res.json();
+      if (data.ok) {
+        btn.textContent = `✓ ${data.generated} done`;
+        await loadClips(session.title);
+      } else {
+        btn.textContent = 'THUMBS';
+        alert('Failed: ' + (data.error || 'unknown'));
+      }
+    } catch (e) {
+      btn.textContent = 'THUMBS';
+    }
+    setTimeout(() => { btn.textContent = 'THUMBS'; btn.disabled = false; }, 3000);
   }
 
   // ── archive ───────────────────────────────────────────────────
