@@ -181,6 +181,13 @@
     }
     .browse-btn:hover { border-color: var(--muted); }
 
+    /* ── scan range ── */
+    .scan-range-wrap { margin: 6px 0; color: var(--muted); font-size: 11px; cursor: pointer; }
+    .scan-range-wrap summary { list-style: none; user-select: none; }
+    .scan-range-row { display: flex; gap: 16px; margin-top: 6px; }
+    .scan-range-row label { display: flex; flex-direction: column; gap: 3px; font-size: 11px; color: var(--muted); }
+    .scan-range-row input { width: 80px; background: var(--surface); border: 1px solid var(--border); color: var(--fg); padding: 4px 6px; font-size: 12px; border-radius: 2px; }
+
     /* ── drop zone ── */
     .drop-zone {
       border: 2px dashed var(--border);
@@ -710,6 +717,14 @@
       <div class="drop-progress-bar" id="dropProgressBar"></div>
     </div>
 
+    <details class="scan-range-wrap">
+      <summary>Scan range (testing)</summary>
+      <div class="scan-range-row">
+        <label>From <input id="scanStart" type="text" placeholder="0:00:00"></label>
+        <label>To <input id="scanEnd" type="text" placeholder="end"></label>
+      </div>
+    </details>
+
     <div class="progress-wrap" id="progressWrap">
       <div class="progress-bar"></div>
     </div>
@@ -898,6 +913,19 @@
     };
 
     const body = isFile ? { path: value } : { url: value };
+    const scanStart = document.getElementById('scanStart').value.trim();
+    const scanEnd   = document.getElementById('scanEnd').value.trim();
+    const parseTs = s => {
+      if (!s) return null;
+      const parts = s.split(':').map(Number);
+      if (parts.length === 3) return parts[0] * 3600 + parts[1] * 60 + parts[2];
+      if (parts.length === 2) return parts[0] * 60 + parts[1];
+      return parseFloat(s);
+    };
+    const startSec = parseTs(scanStart);
+    const endSec   = parseTs(scanEnd);
+    if (startSec !== null) body.start_sec = startSec;
+    if (endSec   !== null) body.end_sec   = endSec;
     fetch('/run', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },

@@ -252,7 +252,11 @@ def run():
     local_path = data.get("path", "").strip()
     if not url and not local_path:
         return jsonify({"error": "No URL or path provided"}), 400
-    threading.Thread(target=run_pipeline, args=(url, local_path), daemon=True).start()
+    start_sec = data.get("start_sec")
+    end_sec = data.get("end_sec")
+    start_sec = float(start_sec) if start_sec not in (None, "") else None
+    end_sec = float(end_sec) if end_sec not in (None, "") else None
+    threading.Thread(target=run_pipeline, args=(url, local_path, start_sec, end_sec), daemon=True).start()
     return jsonify({"status": "started"})
 
 
@@ -268,7 +272,7 @@ def logs():
     return Response(stream(), mimetype="text/event-stream")
 
 
-def run_pipeline(url, local_path=''):
+def run_pipeline(url, local_path='', start_sec=None, end_sec=None):
     try:
         if local_path:
             if not os.path.exists(local_path):
@@ -300,7 +304,7 @@ def run_pipeline(url, local_path=''):
                     return
 
         log("\n🔍  Scanning for KO flashes...")
-        events = detect_ko_events(video_path, log_fn=log)
+        events = detect_ko_events(video_path, log_fn=log, start_scan_sec=start_sec, max_scan_sec=end_sec)
 
         if not events:
             log("⚠️  No KO events detected.")

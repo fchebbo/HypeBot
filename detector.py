@@ -26,6 +26,15 @@ BRIGHT_PIXEL_RATIO     = 0.55  # fraction of true-white pixels required to trigg
 FLASH_SPIKE            = 0.30  # how much above rolling baseline the ratio must jump to trigger
 ROLLING_WINDOW         = 40    # decoded frames to track for baseline (~3-4s at FRAME_SKIP=4, 30fps)
 
+# --- Red flash detection (KO hit effect — fires at the hit, not the victory screen) ---
+RED_PIXEL_THRESHOLD_R  = 180   # minimum red channel value
+RED_PIXEL_THRESHOLD_GB = 110   # maximum green/blue channel value (110 catches orange-red bursts)
+RED_PIXEL_RATIO        = 0.13  # fraction of red pixels required to trigger
+RED_KO_OFFSET_SEC      = 0.5   # red flash fires at the hit — small offset
+MIN_RED_FLASH_SEC      = 0.3
+MAX_RED_FLASH_SEC      = 1.8
+RED_MERGE_WINDOW_SEC   = 10.0  # red event within this many seconds of a white event = same KO
+
 
 def _fmt_ts(seconds):
     h = int(seconds // 3600)
@@ -79,7 +88,7 @@ def dump_frame_at(video_path, target_sec, out_path="debug_frame.png", log_fn=pri
         log_fn(f"❌  Could not extract frame at {target_sec}s")
 
 
-def detect_ko_events(video_path, force_rescan=False, log_fn=print, max_scan_sec=None):
+def detect_ko_events(video_path, force_rescan=False, log_fn=print, max_scan_sec=None, start_scan_sec=None):
     if not force_rescan:
         cached = _load_cache(video_path, log_fn)
         if cached is not None:
@@ -91,11 +100,20 @@ def detect_ko_events(video_path, force_rescan=False, log_fn=print, max_scan_sec=
     duration_sec = total_frames / fps
 
     log_fn(f"📹  Video: {duration_sec:.1f}s at {fps:.1f} FPS ({total_frames} frames)")
+
+    if start_scan_sec is not None:
+        cap.set(cv2.CAP_PROP_POS_MSEC, start_scan_sec * 1000)
+        log_fn(f"⏩  Seeking to {_fmt_ts(start_scan_sec)} before scan...")
+
     log_fn(f"🔎  Scanning every {FRAME_SKIP} frames for KO flashes...")
 
     ko_events = []
     in_flash = False
     flash_start_pts = 0.0
+    in_red_flash = False
+    red_flash_start_pts = 0.0
+    red_flash_end_pts = 0.0
+    red_events = []
     frame_num = 0
     last_log_frame = 0
     consecutive_failures = 0
@@ -130,6 +148,13 @@ def detect_ko_events(video_path, force_rescan=False, log_fn=print, max_scan_sec=
             is_white = (min_ch >= BRIGHT_PIXEL_THRESHOLD) & ((max_ch - min_ch) <= BRIGHT_PIXEL_SPREAD)
             white_ratio = np.mean(is_white)
 
+            # Red sample uses outer thirds only — center has characters/smoke that dilute the ratio
+            w3 = w // 3
+            red_sample = np.concatenate([
+                small[vy0:vy1, :w3].reshape(-1, 3),
+                small[vy0:vy1, 2*w3:].reshape(-1, 3)
+            ])
+
             baseline = np.mean(baseline_window) if len(baseline_window) >= 5 else 0.0
             is_flash_frame = white_ratio >= BRIGHT_PIXEL_RATIO and (white_ratio - baseline) >= FLASH_SPIKE
             if not in_flash:
@@ -154,6 +179,31 @@ def detect_ko_events(video_path, force_rescan=False, log_fn=print, max_scan_sec=
                         log_fn(f"  ⏭️  Flash too long ({flash_duration_sec:.2f}s) at {_fmt_ts(flash_start_pts)} — skipped")
                     in_flash = False
 
+            # --- Red flash check (OpenCV is BGR: index 2=R, 1=G, 0=B) ---
+            r_ch = red_sample[:, 2]
+            g_ch = red_sample[:, 1]
+            b_ch = red_sample[:, 0]
+            is_red = (r_ch >= RED_PIXEL_THRESHOLD_R) & (g_ch <= RED_PIXEL_THRESHOLD_GB) & (b_ch <= RED_PIXEL_THRESHOLD_GB)
+            red_ratio = np.mean(is_red)
+
+            is_red_flash_frame = red_ratio >= RED_PIXEL_RATIO
+            in_cooldown = (current_pts - red_flash_end_pts) < MIN_RED_FLASH_SEC
+
+            if is_red_flash_frame and not in_cooldown:
+                if not in_red_flash:
+                    in_red_flash = True
+                    red_flash_start_pts = current_pts
+            else:
+                if in_red_flash:
+                    red_duration = current_pts - red_flash_start_pts
+                    if MIN_RED_FLASH_SEC <= red_duration <= MAX_RED_FLASH_SEC:
+                        red_events.append({
+                            'flash_start': red_flash_start_pts,
+                            'flash_duration': red_duration,
+                        })
+                    in_red_flash = False
+                    red_flash_end_pts = current_pts
+
         frame_num += 1
         if max_scan_sec is not None and current_pts > max_scan_sec:
             log_fn(f"  ⏹️  Scan limit reached ({max_scan_sec}s) — stopping early.")
@@ -166,6 +216,23 @@ def detect_ko_events(video_path, force_rescan=False, log_fn=print, max_scan_sec=
             last_log_frame = frame_num
 
     cap.release()
+
+    # Merge red flash events that have no nearby white flash (player-cam cutaway cases)
+    for red in red_events:
+        has_nearby_white = any(
+            abs(w['victory_flash_timestamp'] - red['flash_start']) <= RED_MERGE_WINDOW_SEC
+            for w in ko_events
+        )
+        if not has_nearby_white:
+            ko_ts = max(0, red['flash_start'] - RED_KO_OFFSET_SEC)
+            log_fn(f"  🔴  KO detected via red flash at {_fmt_ts(ko_ts)} (flash: {red['flash_duration']:.2f}s)")
+            ko_events.append({
+                'ko_timestamp': ko_ts,
+                'victory_flash_timestamp': red['flash_start'],
+                'flash_duration_seconds': red['flash_duration'],
+            })
+
+    ko_events.sort(key=lambda e: e['ko_timestamp'])
 
     log_fn(f"✅  Scan complete — {len(ko_events)} KO event(s) found.")
     _save_cache(video_path, ko_events, log_fn)
