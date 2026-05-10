@@ -234,3 +234,153 @@ def render_with_text(clip_path, above_text, below_text, output_path, log_fn=prin
             os.unlink(tmp_path)
         except Exception:
             pass
+
+
+def render_stitch(
+    clip1_path, clip2_path,
+    above1, below1, hook_offset1,
+    above2, below2, hook_offset2,
+    transition_text,
+    output_path,
+    log_fn=print,
+):
+    def _read_clip_info(path):
+        cap = cv2.VideoCapture(path)
+        w   = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        h   = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        dur = cap.get(cv2.CAP_PROP_FRAME_COUNT) / cap.get(cv2.CAP_PROP_FPS)
+        cap.release()
+        return w, h, dur
+
+    clip_w, clip_h, dur1 = _read_clip_info(clip1_path)
+    _,      _,      dur2 = _read_clip_info(clip2_path)
+
+    if not clip_w or not clip_h:
+        log_fn("❌  Could not read clip dimensions.")
+        return False
+
+    top_bar_bottom, bottom_bar_top = _bar_regions(clip_w, clip_h)
+
+    def _make_overlay(above, below):
+        img  = Image.new('RGBA', (clip_w, clip_h), (0, 0, 0, 0))
+        draw = ImageDraw.Draw(img)
+        if above:
+            _draw_bar_text(draw, above.upper(), clip_w, 0, top_bar_bottom)
+        if below:
+            _draw_bar_text(draw, below.upper(), clip_w, bottom_bar_top, clip_h)
+        t = tempfile.NamedTemporaryFile(suffix='.png', delete=False)
+        t.close()
+        img.save(t.name)
+        return t.name
+
+    def _make_title_card(text):
+        img  = Image.new('RGBA', (clip_w, clip_h), (0, 0, 0, 255))
+        draw = ImageDraw.Draw(img)
+        _draw_bar_text(draw, text.upper(), clip_w, 0, clip_h, max_size=100)
+        t = tempfile.NamedTemporaryFile(suffix='.png', delete=False)
+        t.close()
+        img.save(t.name)
+        return t.name
+
+    tmp_pngs = []
+    tmp_vids = []
+
+    try:
+        log_fn(f"🎨  Compositing overlays  ({clip_w}x{clip_h})...")
+        ov1  = _make_overlay(above1, below1);  tmp_pngs.append(ov1)
+        ov2  = _make_overlay(above2, below2);  tmp_pngs.append(ov2)
+        card = _make_title_card(transition_text); tmp_pngs.append(card)
+
+        def _render_hook(clip_path, overlay_path, offset, label):
+            clip_dur = dur1 if label == '1' else dur2
+            start    = round(max(0.0, clip_dur - offset), 3)
+            t = tempfile.NamedTemporaryFile(suffix='.mp4', delete=False)
+            t.close()
+            log_fn(f"🎬  Rendering clip {label} hook ({offset}s from end)...")
+            # Use atrim/vtrim so audio and video trim in perfect sync — avoids
+            # the brief audio dropout that fast-seek (-ss before -i) causes at boundaries
+            fc = (
+                f"[0:v]trim=start={start},setpts=PTS-STARTPTS[tv];"
+                f"[0:a]atrim=start={start},asetpts=PTS-STARTPTS[ta];"
+                f"[tv][1:v]overlay=0:0[v]"
+            )
+            cmd = [
+                'ffmpeg', '-y',
+                '-i', clip_path,
+                '-i', overlay_path,
+                '-filter_complex', fc,
+                '-map', '[v]', '-map', '[ta]',
+                '-c:v', 'libx264', '-c:a', 'aac',
+                '-preset', 'ultrafast', '-r', '30',
+                t.name,
+            ]
+            r = subprocess.run(cmd, stdout=subprocess.DEVNULL,
+                               stderr=subprocess.PIPE, timeout=FFMPEG_TIMEOUT)
+            if r.returncode != 0:
+                log_fn(f"❌  Clip {label} failed: " + r.stderr.decode(errors='replace')[-400:])
+                return None
+            return t.name
+
+        h1 = _render_hook(clip1_path, ov1, hook_offset1, '1')
+        if not h1: return False
+        tmp_vids.append(h1)
+
+        # Title card video (1 second, silent audio)
+        log_fn("🎬  Rendering transition card...")
+        tc = tempfile.NamedTemporaryFile(suffix='.mp4', delete=False)
+        tc.close()
+        cmd_card = [
+            'ffmpeg', '-y',
+            '-loop', '1', '-i', card,
+            '-f', 'lavfi', '-i', 'anullsrc=r=44100:cl=stereo',
+            '-t', '1', '-r', '30',
+            '-c:v', 'libx264', '-c:a', 'aac',
+            '-preset', 'ultrafast', '-pix_fmt', 'yuv420p',
+            '-shortest',
+            tc.name,
+        ]
+        r = subprocess.run(cmd_card, stdout=subprocess.DEVNULL,
+                           stderr=subprocess.PIPE, timeout=FFMPEG_TIMEOUT)
+        if r.returncode != 0:
+            log_fn("❌  Title card failed: " + r.stderr.decode(errors='replace')[-400:])
+            return False
+        tmp_vids.append(tc.name)
+
+        h2 = _render_hook(clip2_path, ov2, hook_offset2, '2')
+        if not h2: return False
+        tmp_vids.append(h2)
+
+        # Concat all three
+        log_fn("🔗  Stitching clips together...")
+        concat_f = tempfile.NamedTemporaryFile(suffix='.txt', delete=False, mode='w')
+        for v in tmp_vids:
+            concat_f.write(f"file '{v}'\n")
+        concat_path = concat_f.name
+        concat_f.close()
+        tmp_pngs.append(concat_path)
+
+        os.makedirs(os.path.dirname(output_path), exist_ok=True)
+        cmd_cat = [
+            'ffmpeg', '-y',
+            '-f', 'concat', '-safe', '0', '-i', concat_path,
+            '-c:v', 'libx264', '-c:a', 'aac', '-preset', 'ultrafast',
+            output_path,
+        ]
+        r = subprocess.run(cmd_cat, stdout=subprocess.DEVNULL,
+                           stderr=subprocess.PIPE, timeout=FFMPEG_TIMEOUT)
+        if r.returncode != 0:
+            log_fn("❌  Concat failed: " + r.stderr.decode(errors='replace')[-400:])
+            return False
+
+        log_fn("✅  Stitch complete!")
+        return True
+
+    except Exception as e:
+        log_fn(f"❌  {e}")
+        return False
+    finally:
+        for f in tmp_pngs + tmp_vids:
+            try:
+                os.unlink(f)
+            except Exception:
+                pass

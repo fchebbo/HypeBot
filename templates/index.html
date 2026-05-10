@@ -1075,9 +1075,10 @@
     return p.split('/').map(encodeURIComponent).join('/');
   }
 
-  function makeVideoEl(src, thumb) {
+  function makeVideoEl(src, thumb, bustCache) {
     const video = document.createElement('video');
-    video.src = '/clips-serve/' + encodePath(src);
+    const qs = bustCache ? `?t=${Date.now()}` : '';
+    video.src = '/clips-serve/' + encodePath(src) + qs;
     video.controls = true;
     video.preload = thumb ? 'none' : 'metadata';
     video.playsInline = true;
@@ -1297,7 +1298,7 @@
 
     const wrap = document.createElement('div');
     wrap.className = 'clip-video-wrap';
-    wrap.appendChild(makeVideoEl(path));
+    wrap.appendChild(makeVideoEl(path, null, true));
 
     const footer = document.createElement('div');
     footer.className = 'clip-footer';

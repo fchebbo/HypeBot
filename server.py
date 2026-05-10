@@ -8,7 +8,7 @@ import queue
 import subprocess
 import yt_dlp
 from detector import detect_ko_events, cut_clips
-from renderer import render_with_text
+from renderer import render_with_text, render_stitch
 
 app = Flask(__name__)
 log_queue = queue.Queue()
@@ -238,6 +238,61 @@ def render_text_route():
     if ok:
         return jsonify({"ok": True, "path": output_rel, "logs": logs})
     return jsonify({"ok": False, "logs": logs}), 500
+
+
+@app.route("/stitch")
+def stitch_page():
+    return render_template("stitch.html")
+
+
+@app.route("/run-stitch", methods=["POST"])
+def run_stitch():
+    data            = request.get_json()
+    session         = data.get("session", "").strip()
+    clip1_rel       = data.get("clip1", "").strip()
+    clip2_rel       = data.get("clip2", "").strip()
+    above1          = data.get("above1", "").strip()
+    below1          = data.get("below1", "").strip()
+    hook_offset1    = float(data.get("hook_offset1", 2.8))
+    above2          = data.get("above2", "").strip()
+    below2          = data.get("below2", "").strip()
+    hook_offset2    = float(data.get("hook_offset2", 2.8))
+    transition_text = data.get("transition_text", "Later...").strip() or "Later..."
+
+    if not session or not clip1_rel or not clip2_rel:
+        return jsonify({"error": "session, clip1 and clip2 are required"}), 400
+
+    clips_root = os.path.abspath("clips")
+    clip1_path = os.path.join(clips_root, session, "vertical", clip1_rel)
+    clip2_path = os.path.join(clips_root, session, "vertical", clip2_rel)
+
+    if not os.path.exists(clip1_path):
+        return jsonify({"error": f"Clip 1 not found: {clip1_rel}"}), 404
+    if not os.path.exists(clip2_path):
+        return jsonify({"error": f"Clip 2 not found: {clip2_rel}"}), 404
+
+    base1 = clip1_rel.replace("_vertical.mp4", "")
+    base2 = clip2_rel.replace("_vertical.mp4", "")
+    out_name   = f"{base1}__{base2}_stitch.mp4"
+    output_dir = os.path.join(clips_root, session, "combined")
+    output_path = os.path.join(output_dir, out_name)
+    output_rel  = f"{session}/combined/{out_name}"
+
+    def do_stitch():
+        ok = render_stitch(
+            clip1_path, clip2_path,
+            above1, below1, hook_offset1,
+            above2, below2, hook_offset2,
+            transition_text, output_path,
+            log_fn=log,
+        )
+        if ok:
+            log(f"__stitch_done__:{output_rel}")
+        else:
+            log("__stitch_failed__")
+
+    threading.Thread(target=do_stitch, daemon=True).start()
+    return jsonify({"status": "started"})
 
 
 @app.route("/clips-serve/<path:filename>")

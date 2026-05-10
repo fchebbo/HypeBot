@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>HypeBot — Stitch</title>
+  <style>
+    :root {
+      --bg:      #0e0e0e;
+      --surface: #1a1a1a;
+      --border:  #2e2e2e;
+      --fg:      #f0f0f0;
+      --muted:   #666;
+      --accent:  #e8ff00;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { background: var(--bg); color: var(--fg); font-family: 'Arial', sans-serif; font-size: 13px; padding: 32px 24px; max-width: 720px; margin: 0 auto; }
+    h1 { font-size: 18px; letter-spacing: 2px; text-transform: uppercase; margin-bottom: 6px; }
+    .back { color: var(--muted); font-size: 11px; margin-bottom: 28px; display: block; text-decoration: none; }
+    .back:hover { color: var(--fg); }
+    .section { background: var(--surface); border: 1px solid var(--border); border-radius: 4px; padding: 20px; margin-bottom: 16px; }
+    .section-title { font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: var(--muted); margin-bottom: 14px; }
+    .row { display: flex; gap: 12px; margin-bottom: 12px; }
+    .field { display: flex; flex-direction: column; gap: 5px; flex: 1; }
+    .field label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; }
+    .field input, .field select { background: var(--bg); border: 1px solid var(--border); color: var(--fg); padding: 8px 10px; font-size: 13px; border-radius: 2px; width: 100%; }
+    .field select option { background: var(--bg); }
+    .divider { border: none; border-top: 1px solid var(--border); margin: 16px 0; }
+    .transition-row { display: flex; align-items: center; gap: 16px; padding: 14px 0; }
+    .transition-label { color: var(--muted); font-size: 11px; text-transform: uppercase; white-space: nowrap; }
+    .transition-row input { background: var(--bg); border: 1px solid var(--border); color: var(--accent); padding: 8px 10px; font-size: 14px; font-weight: bold; border-radius: 2px; width: 200px; text-align: center; }
+    .render-btn { background: var(--accent); color: #000; border: none; padding: 12px 32px; font-size: 13px; font-weight: bold; letter-spacing: 2px; text-transform: uppercase; cursor: pointer; border-radius: 2px; width: 100%; margin-top: 8px; }
+    .render-btn:hover { background: #fff; }
+    .render-btn:disabled { background: var(--border); color: var(--muted); cursor: not-allowed; }
+    .log-label { font-size: 10px; text-transform: uppercase; letter-spacing: 1px; color: var(--muted); margin: 20px 0 6px; }
+    .log-box { background: #000; border: 1px solid var(--border); border-radius: 2px; padding: 12px; height: 180px; overflow-y: auto; font-size: 11px; font-family: monospace; line-height: 1.6; }
+    .log-line.error { color: #ff6b6b; }
+    .done-banner { background: #1a2e1a; border: 1px solid #2e4a2e; color: #7fff7f; padding: 12px 16px; border-radius: 2px; margin-top: 12px; display: none; font-size: 12px; }
+    .result-video-wrap { margin-top: 16px; display: none; }
+    .result-video-wrap video { width: 100%; max-width: 400px; border-radius: 2px; border: 1px solid var(--border); display: block; margin: 0 auto; }
+    .preview-wrap { margin-top: 10px; display: none; }
+    .preview-wrap video { width: 100%; max-width: 320px; border-radius: 2px; border: 1px solid var(--border); display: block; cursor: pointer; }
+  </style>
+</head>
+<body>
+  <h1>Stitch</h1>
+  <a class="back" href="/">← Back to HypeBot</a>
+
+  <div class="section">
+    <div class="section-title">Session</div>
+    <div class="field">
+      <label>Session</label>
+      <select id="sessionSel" onchange="loadClips()">
+        <option value="">— select session —</option>
+      </select>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="section-title">Clip 1</div>
+    <div class="row">
+      <div class="field">
+        <label>Clip</label>
+        <select id="clip1Sel" onchange="updatePreview('1')"><option value="">— select clip —</option></select>
+        <div class="preview-wrap" id="preview1Wrap">
+          <video id="preview1" controls preload="none"></video>
+        </div>
+      </div>
+      <div class="field" style="max-width:110px">
+        <label>Hook (seconds)</label>
+        <input id="hook1" type="number" value="2.8" min="0.5" max="10" step="0.1">
+      </div>
+    </div>
+    <div class="row">
+      <div class="field">
+        <label>Above text</label>
+        <input id="above1" type="text" placeholder="optional">
+      </div>
+      <div class="field">
+        <label>Below text</label>
+        <input id="below1" type="text" placeholder="optional">
+      </div>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="transition-row">
+      <span class="transition-label">Transition text</span>
+      <input id="transitionText" type="text" value="Later...">
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="section-title">Clip 2</div>
+    <div class="row">
+      <div class="field">
+        <label>Clip</label>
+        <select id="clip2Sel" onchange="updatePreview('2')"><option value="">— select clip —</option></select>
+        <div class="preview-wrap" id="preview2Wrap">
+          <video id="preview2" controls preload="none"></video>
+        </div>
+      </div>
+      <div class="field" style="max-width:110px">
+        <label>Hook (seconds)</label>
+        <input id="hook2" type="number" value="2.8" min="0.5" max="10" step="0.1">
+      </div>
+    </div>
+    <div class="row">
+      <div class="field">
+        <label>Above text</label>
+        <input id="above2" type="text" placeholder="optional">
+      </div>
+      <div class="field">
+        <label>Below text</label>
+        <input id="below2" type="text" placeholder="optional">
+      </div>
+    </div>
+  </div>
+
+  <button class="render-btn" id="renderBtn" onclick="startStitch()">RENDER STITCH</button>
+
+  <div class="log-label">Log</div>
+  <div class="log-box" id="logBox"></div>
+  <div class="done-banner" id="doneBanner">✅ &nbsp; Stitch complete</div>
+  <div class="result-video-wrap" id="resultWrap">
+    <video id="resultVideo" controls preload="auto"></video>
+  </div>
+
+  <script>
+    let evtSource = null;
+
+    async function loadSessions() {
+      const res  = await fetch('/clips-list');
+      const data = await res.json();
+      const sel  = document.getElementById('sessionSel');
+      (data.sessions || []).forEach(s => {
+        const o = document.createElement('option');
+        o.value = s.title;
+        o.textContent = s.title;
+        sel.appendChild(o);
+      });
+    }
+
+    function loadClips() {
+      const session = document.getElementById('sessionSel').value;
+      const sel1    = document.getElementById('clip1Sel');
+      const sel2    = document.getElementById('clip2Sel');
+      sel1.innerHTML = '<option value="">— select clip —</option>';
+      sel2.innerHTML = '<option value="">— select clip —</option>';
+      if (!session) return;
+
+      fetch('/clips-list').then(r => r.json()).then(data => {
+        const s = (data.sessions || []).find(s => s.title === session);
+        if (!s) return;
+        s.clips.forEach(c => {
+          const fname = c.vertical.split('/').pop();
+          [sel1, sel2].forEach(sel => {
+            const o = document.createElement('option');
+            o.value = fname;
+            o.textContent = c.name;
+            sel.appendChild(o);
+          });
+        });
+      });
+    }
+
+    function startStitch() {
+      const session = document.getElementById('sessionSel').value;
+      const clip1   = document.getElementById('clip1Sel').value;
+      const clip2   = document.getElementById('clip2Sel').value;
+
+      if (!session || !clip1 || !clip2) {
+        alert('Select a session and both clips first.');
+        return;
+      }
+      if (clip1 === clip2) {
+        alert('Clip 1 and Clip 2 must be different.');
+        return;
+      }
+
+      document.getElementById('renderBtn').disabled = true;
+      document.getElementById('doneBanner').style.display = 'none';
+      document.getElementById('logBox').innerHTML = '';
+
+      const body = {
+        session,
+        clip1,
+        clip2,
+        above1:          document.getElementById('above1').value,
+        below1:          document.getElementById('below1').value,
+        hook_offset1:    parseFloat(document.getElementById('hook1').value),
+        above2:          document.getElementById('above2').value,
+        below2:          document.getElementById('below2').value,
+        hook_offset2:    parseFloat(document.getElementById('hook2').value),
+        transition_text: document.getElementById('transitionText').value || 'Later...',
+      };
+
+      fetch('/run-stitch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+
+      if (evtSource) evtSource.close();
+      evtSource = new EventSource('/logs');
+      evtSource.onmessage = e => {
+        const msg = e.data;
+        if (msg === '__keepalive__') return;
+
+        if (msg.startsWith('__stitch_done__:')) {
+          const rel = msg.split(':').slice(1).join(':');
+          evtSource.close();
+          document.getElementById('renderBtn').disabled = false;
+          document.getElementById('doneBanner').style.display = 'block';
+          const wrap  = document.getElementById('resultWrap');
+          const video = document.getElementById('resultVideo');
+          video.src = `/clips-serve/${rel.split('/').map(encodeURIComponent).join('/')}?t=${Date.now()}`;
+          video.load();
+          wrap.style.display = 'block';
+          return;
+        }
+        if (msg === '__stitch_failed__') {
+          evtSource.close();
+          document.getElementById('renderBtn').disabled = false;
+          return;
+        }
+
+        const logBox = document.getElementById('logBox');
+        const line   = document.createElement('span');
+        line.className = 'log-line' + (msg.includes('❌') || msg.includes('⚠️') ? ' error' : '');
+        line.textContent = msg;
+        logBox.appendChild(line);
+        logBox.appendChild(document.createElement('br'));
+        logBox.scrollTop = logBox.scrollHeight;
+      };
+    }
+
+    function encodeClipPath(...parts) {
+      return parts.map(encodeURIComponent).join('/');
+    }
+
+    function updatePreview(n) {
+      const session  = document.getElementById('sessionSel').value;
+      const filename = document.getElementById(`clip${n}Sel`).value;
+      const wrap     = document.getElementById(`preview${n}Wrap`);
+      const video    = document.getElementById(`preview${n}`);
+      if (!session || !filename) { wrap.style.display = 'none'; return; }
+      video.src = `/clips-serve/${encodeClipPath(session, 'vertical', filename)}`;
+      video.load();
+      wrap.style.display = 'block';
+    }
+
+    loadSessions();
+  </script>
+</body>
+</html>
