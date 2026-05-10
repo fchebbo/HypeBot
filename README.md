@@ -257,3 +257,16 @@ When you're done with a VOD and don't need it cluttering the review screen:
 3. The session moves to `clips/archived/` and disappears from the list
 
 To restore an archived session, click the **ARCHIVED (N)** button that appears above the review section and hit **RESTORE** next to the one you want back.
+
+### Stitch two clips together
+
+The stitch tool combines the KO hook from two clips into a single Short — great for telling a full game story (e.g. a 0-to-death opener followed by the close-out).
+
+1. Go to `http://localhost:5000/stitch`
+2. Select the session both clips belong to
+3. Pick **Clip 1** and **Clip 2** from the dropdowns — a preview player appears for each so you can watch before committing
+4. Set the **hook offset** for each clip (how many seconds from the end to include)
+5. Customize the **transition text** (defaults to "Later...")
+6. Add **above/below text** for each clip independently
+7. Click **RENDER STITCH** — when done, the result plays inline for review
+8. The combined clip is saved to `clips/[session]/combined/`
