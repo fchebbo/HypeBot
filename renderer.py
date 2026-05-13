@@ -236,6 +236,216 @@ def render_with_text(clip_path, above_text, below_text, output_path, log_fn=prin
             pass
 
 
+def render_replay(
+    clip_path,
+    top_text,
+    replay_text,
+    c4_time,
+    slowmo_input,
+    slowmo_factor,
+    zoom_factor,
+    crossfade_dur,
+    output_path,
+    log_fn=print,
+    ko_hook=False,
+    ko_hook_offset=6.0,
+):
+    cap       = cv2.VideoCapture(clip_path)
+    clip_w    = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    clip_h    = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    total_dur = cap.get(cv2.CAP_PROP_FRAME_COUNT) / cap.get(cv2.CAP_PROP_FPS)
+    cap.release()
+
+    if not clip_w or not clip_h:
+        log_fn("❌  Could not read clip dimensions.")
+        return False
+
+    tmp = []
+
+    def _tmp_mp4():
+        t = tempfile.NamedTemporaryFile(suffix='.mp4', delete=False)
+        t.close()
+        tmp.append(t.name)
+        return t.name
+
+    def _run(cmd, label):
+        r = subprocess.run(cmd, stdout=subprocess.DEVNULL,
+                           stderr=subprocess.PIPE, timeout=FFMPEG_TIMEOUT)
+        if r.returncode != 0:
+            log_fn(f"❌  {label}: " + r.stderr.decode(errors='replace')[-400:])
+            return False
+        return True
+
+    # Pre-trim to KO hook if requested
+    if ko_hook:
+        hook_start = round(max(0.0, total_dur - ko_hook_offset), 3)
+        log_fn(f"✂️  Trimming to last {ko_hook_offset}s (from {hook_start:.2f}s)...")
+        trimmed = _tmp_mp4()
+        if not _run([
+            'ffmpeg', '-y', '-i', clip_path,
+            '-filter_complex',
+            f"[0:v]trim=start={hook_start},setpts=PTS-STARTPTS[v];"
+            f"[0:a]atrim=start={hook_start},asetpts=PTS-STARTPTS[a]",
+            '-map', '[v]', '-map', '[a]',
+            '-c:v', 'libx264', '-c:a', 'aac', '-preset', 'ultrafast', '-r', '30',
+            trimmed,
+        ], "KO hook trim"):
+            for f in tmp:
+                try: os.unlink(f)
+                except: pass
+            return False
+        clip_path = trimmed
+        cap2 = cv2.VideoCapture(clip_path)
+        total_dur = cap2.get(cv2.CAP_PROP_FRAME_COUNT) / cap2.get(cv2.CAP_PROP_FPS)
+        cap2.release()
+
+    c4_time     = round(min(c4_time, total_dur - 0.1), 3)
+    end_b       = round(min(c4_time + slowmo_input, total_dur), 3)
+    slowmo_pts  = round(1.0 / slowmo_factor, 4)
+    crop_w      = int(clip_w / zoom_factor) & ~1
+    crop_h      = int(clip_h / zoom_factor) & ~1
+    crop_x      = (clip_w - crop_w) // 2
+    crop_y      = (clip_h - crop_h) // 2
+
+    top_bar_bottom, _ = _bar_regions(clip_w, clip_h)
+
+    try:
+        # --- Part 1: full clip + top text overlay ---
+        log_fn(f"🎨  Creating text overlay...")
+        ov = Image.new('RGBA', (clip_w, clip_h), (0, 0, 0, 0))
+        draw = ImageDraw.Draw(ov)
+        if top_text:
+            _draw_bar_text(draw, top_text.upper(), clip_w, 0, top_bar_bottom)
+        ov_png = tempfile.NamedTemporaryFile(suffix='.png', delete=False)
+        ov_png.close()
+        ov.save(ov_png.name)
+        tmp.append(ov_png.name)
+
+        part1 = _tmp_mp4()
+        log_fn("🎬  Rendering Part 1 (full clip + text)...")
+        if not _run([
+            'ffmpeg', '-y',
+            '-i', clip_path, '-i', ov_png.name,
+            '-filter_complex', '[0:v][1:v]overlay=0:0',
+            '-c:v', 'libx264', '-c:a', 'aac', '-preset', 'ultrafast', '-r', '30',
+            part1,
+        ], "Part 1"): return False
+
+        # --- Replay Segment A: 0 → c4_time (normal) ---
+        segA = _tmp_mp4()
+        log_fn(f"🎬  Replay A: 0s → {c4_time}s (normal speed)...")
+        if c4_time > 0.05:
+            if not _run([
+                'ffmpeg', '-y', '-i', clip_path,
+                '-filter_complex',
+                f"[0:v]trim=start=0:end={c4_time},setpts=PTS-STARTPTS[v];"
+                f"[0:a]atrim=start=0:end={c4_time},asetpts=PTS-STARTPTS[a]",
+                '-map', '[v]', '-map', '[a]',
+                '-c:v', 'libx264', '-c:a', 'aac', '-preset', 'ultrafast', '-r', '30',
+                segA,
+            ], "Seg A"): return False
+        else:
+            segA = None  # skip if c4_time is essentially 0
+
+        # --- Replay Segment B: c4_time → end_b (slowmo + zoom) ---
+        segB = _tmp_mp4()
+        log_fn(f"🎬  Replay B: {c4_time}s → {end_b}s ({slowmo_factor}x speed, {zoom_factor}x zoom)...")
+        if not _run([
+            'ffmpeg', '-y', '-i', clip_path,
+            '-filter_complex',
+            f"[0:v]trim=start={c4_time}:end={end_b},setpts={slowmo_pts}*(PTS-STARTPTS),"
+            f"crop={crop_w}:{crop_h}:{crop_x}:{crop_y},scale={clip_w}:{clip_h}[v];"
+            f"[0:a]atrim=start={c4_time}:end={end_b},asetpts=PTS-STARTPTS,atempo={slowmo_factor}[a]",
+            '-map', '[v]', '-map', '[a]',
+            '-c:v', 'libx264', '-c:a', 'aac', '-preset', 'ultrafast', '-r', '30',
+            segB,
+        ], "Seg B"): return False
+
+        # --- Replay Segment C: end_b → end (normal) ---
+        segC = None
+        if end_b < total_dur - 0.1:
+            segC = _tmp_mp4()
+            log_fn(f"🎬  Replay C: {end_b}s → end (normal speed)...")
+            if not _run([
+                'ffmpeg', '-y', '-i', clip_path,
+                '-filter_complex',
+                f"[0:v]trim=start={end_b},setpts=PTS-STARTPTS[v];"
+                f"[0:a]atrim=start={end_b},asetpts=PTS-STARTPTS[a]",
+                '-map', '[v]', '-map', '[a]',
+                '-c:v', 'libx264', '-c:a', 'aac', '-preset', 'ultrafast', '-r', '30',
+                segC,
+            ], "Seg C"): return False
+
+        # --- Concat replay segments ---
+        replay = _tmp_mp4()
+        concat_f = tempfile.NamedTemporaryFile(suffix='.txt', delete=False, mode='w')
+        segs = [s for s in [segA, segB, segC] if s]
+        for s in segs:
+            concat_f.write(f"file '{s}'\n")
+        concat_path = concat_f.name
+        concat_f.close()
+        tmp.append(concat_path)
+
+        log_fn("🔗  Joining replay segments...")
+        if not _run([
+            'ffmpeg', '-y',
+            '-f', 'concat', '-safe', '0', '-i', concat_path,
+            '-c:v', 'libx264', '-c:a', 'aac', '-preset', 'ultrafast',
+            replay,
+        ], "Replay concat"): return False
+
+        # Apply replay text overlay if provided
+        if replay_text:
+            ov2 = Image.new('RGBA', (clip_w, clip_h), (0, 0, 0, 0))
+            draw2 = ImageDraw.Draw(ov2)
+            _draw_bar_text(draw2, replay_text.upper(), clip_w, 0, top_bar_bottom)
+            ov2_png = tempfile.NamedTemporaryFile(suffix='.png', delete=False)
+            ov2_png.close()
+            ov2.save(ov2_png.name)
+            tmp.append(ov2_png.name)
+            replay_with_text = _tmp_mp4()
+            if not _run([
+                'ffmpeg', '-y',
+                '-i', replay, '-i', ov2_png.name,
+                '-filter_complex', '[0:v][1:v]overlay=0:0',
+                '-c:v', 'libx264', '-c:a', 'aac', '-preset', 'ultrafast',
+                replay_with_text,
+            ], "Replay text"): return False
+            replay = replay_with_text
+
+        # --- Crossfade Part1 + Replay ---
+        log_fn("✨  Applying crossfade transition...")
+        cap1  = cv2.VideoCapture(part1)
+        dur1  = cap1.get(cv2.CAP_PROP_FRAME_COUNT) / cap1.get(cv2.CAP_PROP_FPS)
+        cap1.release()
+        offset = round(max(0.0, dur1 - crossfade_dur), 3)
+
+        os.makedirs(os.path.dirname(output_path), exist_ok=True)
+        if not _run([
+            'ffmpeg', '-y',
+            '-i', part1, '-i', replay,
+            '-filter_complex',
+            f"[0:v][1:v]xfade=transition=fade:duration={crossfade_dur}:offset={offset}[v];"
+            f"[0:a][1:a]acrossfade=d={crossfade_dur}[a]",
+            '-map', '[v]', '-map', '[a]',
+            '-c:v', 'libx264', '-c:a', 'aac', '-preset', 'ultrafast',
+            output_path,
+        ], "Crossfade"): return False
+
+        log_fn("✅  Replay clip ready!")
+        return True
+
+    except Exception as e:
+        log_fn(f"❌  {e}")
+        return False
+    finally:
+        for f in tmp:
+            try:
+                os.unlink(f)
+            except Exception:
+                pass
+
+
 def render_stitch(
     clip1_path, clip2_path,
     above1, below1, hook_offset1,

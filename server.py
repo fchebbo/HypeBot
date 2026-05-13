@@ -8,7 +8,7 @@ import queue
 import subprocess
 import yt_dlp
 from detector import detect_ko_events, cut_clips
-from renderer import render_with_text, render_stitch
+from renderer import render_with_text, render_stitch, render_replay
 
 app = Flask(__name__)
 log_queue = queue.Queue()
@@ -71,6 +71,16 @@ def clips_list():
         orig_dir   = os.path.join(session_path, 'original')
         finals_dir = os.path.join(session_path, 'finals')
 
+        # Load session metadata
+        meta = {"venue": None, "source": None}
+        meta_path = os.path.join(session_path, 'meta.json')
+        if os.path.exists(meta_path):
+            try:
+                with open(meta_path) as f:
+                    meta = json.load(f)
+            except Exception:
+                pass
+
         # Load persisted review states
         review_path = os.path.join(session_path, 'review.json')
         review_states = {}
@@ -107,7 +117,7 @@ def clips_list():
                     finals.append(f'{name}/finals/{f}')
 
         if clips or finals:
-            sessions.append({'title': name, 'clips': clips, 'finals': finals})
+            sessions.append({'title': name, 'clips': clips, 'finals': finals, 'meta': meta})
 
     archived = []
     archived_root = os.path.join(root, 'archived')
@@ -240,6 +250,56 @@ def render_text_route():
     return jsonify({"ok": False, "logs": logs}), 500
 
 
+@app.route("/replay")
+def replay_page():
+    return render_template("replay.html")
+
+
+@app.route("/run-replay", methods=["POST"])
+def run_replay():
+    data         = request.get_json()
+    session      = data.get("session", "").strip()
+    clip_rel     = data.get("clip", "").strip()
+    top_text     = data.get("top_text", "DID YOU CATCH IT?").strip()
+    replay_text  = data.get("replay_text", "").strip()
+    c4_time      = float(data.get("c4_time", 1.0))
+    slowmo_input = float(data.get("slowmo_input", 1.5))
+    slowmo_factor= float(data.get("slowmo_factor", 0.5))
+    zoom_factor  = float(data.get("zoom_factor", 1.5))
+    crossfade_dur  = float(data.get("crossfade_dur", 0.5))
+    ko_hook        = bool(data.get("ko_hook", False))
+    ko_hook_offset = float(data.get("ko_hook_offset", 6.0))
+
+    if not session or not clip_rel:
+        return jsonify({"error": "session and clip are required"}), 400
+
+    clips_root = os.path.abspath("clips")
+    clip_path  = os.path.join(clips_root, session, "vertical", clip_rel)
+    if not os.path.exists(clip_path):
+        return jsonify({"error": "Clip not found"}), 404
+
+    base       = clip_rel.replace("_vertical.mp4", "")
+    out_name   = f"{base}_replay.mp4"
+    output_dir = os.path.join(clips_root, session, "slo-mo-moment")
+    output_path= os.path.join(output_dir, out_name)
+    output_rel = f"{session}/slo-mo-moment/{out_name}"
+
+    def do_replay():
+        ok = render_replay(
+            clip_path, top_text, replay_text, c4_time, slowmo_input,
+            slowmo_factor, zoom_factor, crossfade_dur,
+            output_path, log_fn=log,
+            ko_hook=ko_hook, ko_hook_offset=ko_hook_offset,
+        )
+        if ok:
+            log(f"__replay_done__:{output_rel}")
+        else:
+            log("__replay_failed__")
+
+    threading.Thread(target=do_replay, daemon=True).start()
+    return jsonify({"status": "started"})
+
+
 @app.route("/stitch")
 def stitch_page():
     return render_template("stitch.html")
@@ -368,6 +428,11 @@ def run_pipeline(url, local_path='', start_sec=None, end_sec=None):
 
         safe_title = safe_folder_name(video_title)
         clips_dir = os.path.join("clips", safe_title)
+        os.makedirs(clips_dir, exist_ok=True)
+        meta_path = os.path.join(clips_dir, "meta.json")
+        if not os.path.exists(meta_path):
+            with open(meta_path, "w") as f:
+                json.dump({"venue": video_title, "source": url or local_path}, f, indent=2)
         cut_clips(video_path, events, output_dir=clips_dir, log_fn=log)
 
         log(f"\n✅  Done! Clips saved to: {os.path.abspath(clips_dir)}")
@@ -406,7 +471,7 @@ def download_vod(url):
             log(f"❌  {msg}")
 
     ydl_opts = {
-        'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]',
+        'format': 'bestvideo+bestaudio/best',
         'outtmpl': 'downloads/%(title)s.%(ext)s',
         'merge_output_format': 'mp4',
         'logger': YTLogger(),

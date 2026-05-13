@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>HypeBot — Replay</title>
+  <style>
+    :root {
+      --bg:      #0e0e0e;
+      --surface: #1a1a1a;
+      --border:  #2e2e2e;
+      --fg:      #f0f0f0;
+      --muted:   #666;
+      --accent:  #e8ff00;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { background: var(--bg); color: var(--fg); font-family: 'Arial', sans-serif; font-size: 13px; padding: 32px 24px; max-width: 720px; margin: 0 auto; }
+    h1 { font-size: 18px; letter-spacing: 2px; text-transform: uppercase; margin-bottom: 6px; }
+    .back { color: var(--muted); font-size: 11px; margin-bottom: 28px; display: block; text-decoration: none; }
+    .back:hover { color: var(--fg); }
+    .section { background: var(--surface); border: 1px solid var(--border); border-radius: 4px; padding: 20px; margin-bottom: 16px; }
+    .section-title { font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: var(--muted); margin-bottom: 14px; }
+    .row { display: flex; gap: 12px; margin-bottom: 12px; flex-wrap: wrap; }
+    .field { display: flex; flex-direction: column; gap: 5px; flex: 1; min-width: 100px; }
+    .field label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; }
+    .field input, .field select { background: var(--bg); border: 1px solid var(--border); color: var(--fg); padding: 8px 10px; font-size: 13px; border-radius: 2px; width: 100%; }
+    .field select option { background: var(--bg); }
+    .hint { font-size: 10px; color: var(--muted); margin-top: 2px; }
+    .preview-wrap { margin-top: 10px; display: none; }
+    .preview-wrap video { width: 100%; max-width: 280px; border-radius: 2px; border: 1px solid var(--border); display: block; }
+    .render-btn { background: var(--accent); color: #000; border: none; padding: 12px 32px; font-size: 13px; font-weight: bold; letter-spacing: 2px; text-transform: uppercase; cursor: pointer; border-radius: 2px; width: 100%; margin-top: 8px; }
+    .render-btn:hover { background: #fff; }
+    .render-btn:disabled { background: var(--border); color: var(--muted); cursor: not-allowed; }
+    .log-label { font-size: 10px; text-transform: uppercase; letter-spacing: 1px; color: var(--muted); margin: 20px 0 6px; }
+    .log-box { background: #000; border: 1px solid var(--border); border-radius: 2px; padding: 12px; height: 180px; overflow-y: auto; font-size: 11px; font-family: monospace; line-height: 1.6; }
+    .log-line.error { color: #ff6b6b; }
+    .done-banner { background: #1a2e1a; border: 1px solid #2e4a2e; color: #7fff7f; padding: 12px 16px; border-radius: 2px; margin-top: 12px; display: none; font-size: 12px; }
+    .result-video-wrap { margin-top: 16px; display: none; }
+    .result-video-wrap video { width: 100%; max-width: 360px; border-radius: 2px; border: 1px solid var(--border); display: block; margin: 0 auto; }
+  </style>
+</head>
+<body>
+  <h1>Replay</h1>
+  <a class="back" href="/">← Back to HypeBot</a>
+
+  <div class="section">
+    <div class="section-title">Clip</div>
+    <div class="row">
+      <div class="field">
+        <label>Session</label>
+        <select id="sessionSel" onchange="loadClips()">
+          <option value="">— select session —</option>
+        </select>
+      </div>
+      <div class="field">
+        <label>Clip</label>
+        <select id="clipSel" onchange="updatePreview()">
+          <option value="">— select clip —</option>
+        </select>
+      </div>
+    </div>
+    <div class="preview-wrap" id="previewWrap">
+      <video id="previewVideo" controls preload="none"></video>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="section-title">Text</div>
+    <div class="row">
+      <div class="field">
+        <label>Top text — first play</label>
+        <input id="topText" type="text" value="DID YOU CATCH IT?">
+      </div>
+      <div class="field">
+        <label>Top text — replay</label>
+        <input id="replayText" type="text" placeholder="optional">
+      </div>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="section-title">KO Hook</div>
+    <div class="row">
+      <div class="field" style="flex:0 0 auto;">
+        <label>Use KO hook only</label>
+        <input id="koHookCheck" type="checkbox" onchange="toggleHook()" style="width:auto;margin-top:6px;">
+      </div>
+      <div class="field" id="koHookOffsetField" style="display:none; max-width:140px;">
+        <label>Hook duration (s)</label>
+        <input id="koHookOffset" type="number" value="6.0" min="1" max="20" step="0.5">
+        <span class="hint">Last N seconds of clip</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="section-title">Moment timing</div>
+    <div class="row">
+      <div class="field">
+        <label>Moment start (s)</label>
+        <input id="c4Time" type="number" value="0.8" min="0" step="0.1">
+        <span class="hint">Seconds into clip where the moment happens</span>
+      </div>
+      <div class="field">
+        <label>Slowmo duration (s)</label>
+        <input id="slowmoInput" type="number" value="1.5" min="0.2" step="0.1">
+        <span class="hint">Source seconds to slow down</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="section-title">Effect settings</div>
+    <div class="row">
+      <div class="field">
+        <label>Speed</label>
+        <input id="slowmoFactor" type="number" value="0.5" min="0.5" max="0.9" step="0.05">
+        <span class="hint">0.5 = half speed</span>
+      </div>
+      <div class="field">
+        <label>Zoom</label>
+        <input id="zoomFactor" type="number" value="1.5" min="1.0" max="3.0" step="0.1">
+        <span class="hint">1.5 = 1.5× zoom into center</span>
+      </div>
+      <div class="field">
+        <label>Crossfade (s)</label>
+        <input id="crossfadeDur" type="number" value="0.5" min="0.1" max="1.5" step="0.1">
+        <span class="hint">Transition between plays</span>
+      </div>
+    </div>
+  </div>
+
+  <button class="render-btn" id="renderBtn" onclick="startReplay()">RENDER REPLAY</button>
+
+  <div class="log-label">Log</div>
+  <div class="log-box" id="logBox"></div>
+  <div class="done-banner" id="doneBanner">✅ &nbsp; Replay ready</div>
+  <div class="result-video-wrap" id="resultWrap">
+    <video id="resultVideo" controls preload="auto"></video>
+  </div>
+
+  <script>
+    let evtSource = null;
+
+    async function loadSessions() {
+      const res  = await fetch('/clips-list');
+      const data = await res.json();
+      const sel  = document.getElementById('sessionSel');
+      (data.sessions || []).forEach(s => {
+        const o = document.createElement('option');
+        o.value = s.title;
+        o.textContent = s.title;
+        sel.appendChild(o);
+      });
+    }
+
+    function loadClips() {
+      const session = document.getElementById('sessionSel').value;
+      const sel     = document.getElementById('clipSel');
+      sel.innerHTML = '<option value="">— select clip —</option>';
+      document.getElementById('previewWrap').style.display = 'none';
+      if (!session) return;
+      fetch('/clips-list').then(r => r.json()).then(data => {
+        const s = (data.sessions || []).find(s => s.title === session);
+        if (!s) return;
+        s.clips.forEach(c => {
+          const fname = c.vertical.split('/').pop();
+          const o = document.createElement('option');
+          o.value = fname;
+          o.textContent = c.name;
+          sel.appendChild(o);
+        });
+      });
+    }
+
+    function encodeClipPath(...parts) {
+      return parts.map(encodeURIComponent).join('/');
+    }
+
+    function updatePreview() {
+      const session  = document.getElementById('sessionSel').value;
+      const filename = document.getElementById('clipSel').value;
+      const wrap     = document.getElementById('previewWrap');
+      const video    = document.getElementById('previewVideo');
+      if (!session || !filename) { wrap.style.display = 'none'; return; }
+      video.src = `/clips-serve/${encodeClipPath(session, 'vertical', filename)}`;
+      video.load();
+      wrap.style.display = 'block';
+    }
+
+    function toggleHook() {
+      const on = document.getElementById('koHookCheck').checked;
+      document.getElementById('koHookOffsetField').style.display = on ? 'flex' : 'none';
+    }
+
+    function startReplay() {
+      const session  = document.getElementById('sessionSel').value;
+      const clip     = document.getElementById('clipSel').value;
+      if (!session || !clip) { alert('Select a session and clip first.'); return; }
+
+      document.getElementById('renderBtn').disabled = true;
+      document.getElementById('doneBanner').style.display = 'none';
+      document.getElementById('resultWrap').style.display = 'none';
+      document.getElementById('logBox').innerHTML = '';
+
+      const body = {
+        session,
+        clip,
+        top_text:      document.getElementById('topText').value,
+        replay_text:   document.getElementById('replayText').value,
+        c4_time:       parseFloat(document.getElementById('c4Time').value),
+        slowmo_input:  parseFloat(document.getElementById('slowmoInput').value),
+        slowmo_factor: parseFloat(document.getElementById('slowmoFactor').value),
+        zoom_factor:   parseFloat(document.getElementById('zoomFactor').value),
+        crossfade_dur:   parseFloat(document.getElementById('crossfadeDur').value),
+        ko_hook:         document.getElementById('koHookCheck').checked,
+        ko_hook_offset:  parseFloat(document.getElementById('koHookOffset').value),
+      };
+
+      fetch('/run-replay', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+
+      if (evtSource) evtSource.close();
+      evtSource = new EventSource('/logs');
+      evtSource.onmessage = e => {
+        const msg = e.data;
+        if (msg === '__keepalive__') return;
+
+        if (msg.startsWith('__replay_done__:')) {
+          const rel   = msg.split(':').slice(1).join(':');
+          evtSource.close();
+          document.getElementById('renderBtn').disabled = false;
+          document.getElementById('doneBanner').style.display = 'block';
+          const video = document.getElementById('resultVideo');
+          video.src   = `/clips-serve/${rel.split('/').map(encodeURIComponent).join('/')}?t=${Date.now()}`;
+          video.load();
+          document.getElementById('resultWrap').style.display = 'block';
+          return;
+        }
+        if (msg === '__replay_failed__') {
+          evtSource.close();
+          document.getElementById('renderBtn').disabled = false;
+          return;
+        }
+
+        const logBox = document.getElementById('logBox');
+        const line   = document.createElement('span');
+        line.className = 'log-line' + (msg.includes('❌') || msg.includes('⚠️') ? ' error' : '');
+        line.textContent = msg;
+        logBox.appendChild(line);
+        logBox.appendChild(document.createElement('br'));
+        logBox.scrollTop = logBox.scrollHeight;
+      };
+    }
+
+    loadSessions();
+  </script>
+</body>
+</html>

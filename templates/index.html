@@ -480,6 +480,22 @@
     .state-btn.skip-active  { background: var(--muted); border-color: var(--muted); color: #fff; }
 
     /* ── filter bar ── */
+    .session-meta { margin-bottom: 10px; }
+    .session-meta textarea {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      color: var(--muted);
+      font-size: 11px;
+      font-family: monospace;
+      line-height: 1.7;
+      padding: 8px 10px;
+      border-radius: 2px;
+      width: 100%;
+      resize: none;
+      cursor: pointer;
+      outline: none;
+    }
+    .session-meta textarea:focus { border-color: var(--accent); color: var(--fg); }
     .filter-bar {
       display: flex;
       gap: 6px;
@@ -750,6 +766,7 @@
       <button class="icon-btn" id="thumbsBtn" onclick="generateThumbs()" title="Generate thumbnails for this session" style="font-size:14px;letter-spacing:0.06em;font-family:var(--display)">THUMBS</button>
       <button class="icon-btn" id="archiveBtn" onclick="archiveSession()" title="Archive current session" style="font-size:14px;letter-spacing:0.06em;font-family:var(--display)">ARCHIVE</button>
     </div>
+    <div class="session-meta" id="sessionMeta" style="display:none"></div>
     <div class="filter-bar" id="filterBar">
       <button class="filter-btn active" data-filter="all"        onclick="setFilter('all')">ALL</button>
       <button class="filter-btn"        data-filter="flagged"    onclick="setFilter('flagged')">⭐ FLAGGED</button>
@@ -1009,9 +1026,22 @@
   function renderClips(session) {
     const grid       = document.getElementById('clipsGrid');
     const finalsGrid = document.getElementById('finalsGrid');
+    const metaBar    = document.getElementById('sessionMeta');
     grid.innerHTML       = '';
     finalsGrid.innerHTML = '';
     finalsGrid.style.display = 'none';
+
+    const meta = session && session.meta;
+    if (meta && (meta.venue || meta.source)) {
+      const lines = [];
+      if (meta.venue)  lines.push(`Venue: ${meta.venue}`);
+      if (meta.source) lines.push(`Source: ${meta.source}`);
+      const text = lines.join('\n');
+      metaBar.innerHTML = `<textarea readonly onclick="this.select()" title="Click to select all">${text}</textarea>`;
+      metaBar.style.display = 'block';
+    } else {
+      metaBar.style.display = 'none';
+    }
 
     if (!session || (!session.clips.length && !session.finals.length)) {
       const empty = document.createElement('div');

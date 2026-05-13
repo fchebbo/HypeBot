@@ -258,6 +258,19 @@ When you're done with a VOD and don't need it cluttering the review screen:
 
 To restore an archived session, click the **ARCHIVED (N)** button that appears above the review section and hit **RESTORE** next to the one you want back.
 
+### Create a slow-motion replay
+
+The replay tool takes a single clip and produces a "Did You Catch It?" Short — the clip plays once at full speed, then plays again with a slow-motion zoom on the key moment.
+
+1. Go to `http://localhost:5000/replay`
+2. Select the session and clip from the dropdowns — a preview player appears so you can watch first
+3. Optionally check **Use KO hook only** to trim the clip to just the last few seconds (good for longer clips where only the finish matters)
+4. Set **Moment start** — how many seconds into the clip the key moment happens (this is where the slowmo begins)
+5. Tune **Slowmo duration**, **Speed**, **Zoom**, and **Crossfade** to taste
+6. Set the **top text** shown during the first play (e.g. "DID YOU CATCH IT?") and optionally different text for the replay
+7. Click **RENDER REPLAY** — when done, the result plays inline
+8. The clip is saved to `clips/[session]/slo-mo-moment/`
+
 ### Stitch two clips together
 
 The stitch tool combines the KO hook from two clips into a single Short — great for telling a full game story (e.g. a 0-to-death opener followed by the close-out).
