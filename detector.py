@@ -348,3 +348,54 @@ def cut_clips(video_path, ko_events, output_dir="clips", log_fn=print):
             log_fn(f"    ❌  Both outputs failed for clip {i+1}.")
 
     log_fn(f"\n✅  All clips saved to '{output_dir}/'")
+
+
+def cut_extended_vertical(video_path, ko_timestamp, extend_sec, output_path, log_fn=print):
+    """Cut a single extended vertical clip from the source VOD for the Extend feature.
+
+    Produces the same 9:16 blurred-background format as cut_clips(), but with
+    CLIP_AFTER_SEC + extend_sec of footage after the KO instead of CLIP_AFTER_SEC.
+    Used by the render-text route when extend_sec > 0.
+    """
+    cap = cv2.VideoCapture(video_path)
+    src_width  = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    src_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    cap.release()
+
+    if not src_width or not src_height:
+        log_fn("❌  Could not read VOD dimensions for extended cut.")
+        return False
+
+    out_height = src_height if src_height % 2 == 0 else src_height - 1
+    out_width  = int(src_height * 9 / 16)
+    out_width  = out_width if out_width % 2 == 0 else out_width - 1
+
+    fg_width  = out_width
+    fg_height = int(out_width * src_height / src_width)
+    fg_height = fg_height if fg_height % 2 == 0 else fg_height - 1
+    fg_y      = (out_height - fg_height) // 2
+
+    blur_filter = (
+        f"[0:v]scale={out_width}:{out_height}:force_original_aspect_ratio=increase,"
+        f"crop={out_width}:{out_height},"
+        f"boxblur={BLUR_STRENGTH}:{BLUR_STRENGTH}[bg];"
+        f"[0:v]scale={fg_width}:{fg_height}[fg];"
+        f"[bg][fg]overlay=0:{fg_y}"
+    )
+
+    start    = max(0, ko_timestamp - CLIP_BEFORE_SEC)
+    duration = CLIP_BEFORE_SEC + CLIP_AFTER_SEC + extend_sec
+
+    log_fn(f"⏱️  Extend: cutting +{extend_sec}s from VOD (total {duration}s)...")
+    cmd = [
+        "ffmpeg", "-y",
+        "-ss", str(start),
+        "-i", video_path,
+        "-t", str(duration),
+        "-filter_complex", blur_filter,
+        "-c:v", "libx264",
+        "-c:a", "aac",
+        "-preset", "ultrafast",
+        output_path,
+    ]
+    return run_ffmpeg(cmd, "extended_vertical", log_fn)

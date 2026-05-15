@@ -605,6 +605,19 @@
     }
     .hook-offset-input:focus { border-color: var(--red); }
     .hook-offset-input:disabled { opacity: 0.3; }
+    .extend-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 4px 0;
+    }
+    .extend-row label {
+      font-size: 11px;
+      letter-spacing: 0.08em;
+      color: var(--muted);
+      text-transform: uppercase;
+      flex: 1;
+    }
 
     /* ── finals section ── */
     .grid-label {
@@ -1247,6 +1260,29 @@
     hookRow.appendChild(hookLabel);
     hookRow.appendChild(hookOffsetInput);
 
+    const extendRow = document.createElement('div');
+    extendRow.className = 'extend-row';
+
+    const extendLabel = document.createElement('label');
+    extendLabel.textContent = 'Extend clip';
+
+    const extendInput = document.createElement('input');
+    extendInput.className = 'hook-offset-input';
+    extendInput.type = 'number';
+    extendInput.value = '0';
+    extendInput.min = '0';
+    extendInput.max = '5.0';
+    extendInput.step = '0.5';
+    extendInput.title = 'Extra seconds beyond the standard 13s clip';
+
+    const extendUnit = document.createElement('span');
+    extendUnit.textContent = 's';
+    extendUnit.style.cssText = 'font-size:11px;color:var(--muted);';
+
+    extendRow.appendChild(extendLabel);
+    extendRow.appendChild(extendInput);
+    extendRow.appendChild(extendUnit);
+
     const aboveInput = document.createElement('input');
     aboveInput.className = 'hook-input';
     aboveInput.placeholder = 'ABOVE text (optional)';
@@ -1278,6 +1314,7 @@
             below:       belowInput.value.trim(),
             hook:        hookCheck.checked,
             hook_offset: parseFloat(hookOffsetInput.value) || 2.8,
+            extend_sec:  parseFloat(extendInput.value) || 0,
           }),
         });
         const data = await res.json();
@@ -1306,6 +1343,7 @@
     });
 
     textPanel.appendChild(hookRow);
+    textPanel.appendChild(extendRow);
     textPanel.appendChild(aboveInput);
     textPanel.appendChild(belowInput);
     textPanel.appendChild(renderBtn);

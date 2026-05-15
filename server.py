@@ -3,11 +3,12 @@ import json
 import os
 import re
 import shutil
+import tempfile
 import threading
 import queue
 import subprocess
 import yt_dlp
-from detector import detect_ko_events, cut_clips
+from detector import detect_ko_events, cut_clips, cut_extended_vertical
 from renderer import render_with_text, render_stitch, render_replay
 
 app = Flask(__name__)
@@ -218,6 +219,7 @@ def render_text_route():
     below       = data.get("below", "").strip()
     hook        = bool(data.get("hook", False))
     hook_offset = float(data.get("hook_offset", 2.8))
+    extend_sec  = float(data.get("extend_sec", 0.0))
 
     if not clip_rel:
         return jsonify({"error": "No clip specified"}), 400
@@ -243,7 +245,36 @@ def render_text_route():
         logs.append(msg)
         print(msg)
 
-    ok = render_with_text(clip_path, above, below, output_path, log_fn=capture, hook=hook, hook_offset=hook_offset)
+    render_source = clip_path
+    tmp_extended  = None
+
+    if extend_sec > 0:
+        meta_path = os.path.join(clips_root, session, "meta.json")
+        ko_ts     = _parse_ko_ts_from_filename(orig_name)
+        vod_path  = None
+        if os.path.exists(meta_path):
+            with open(meta_path) as f:
+                meta = json.load(f)
+            vod_path = meta.get("vod_path")
+
+        if vod_path and os.path.exists(vod_path) and ko_ts is not None:
+            tmp_extended  = tempfile.NamedTemporaryFile(suffix=".mp4", delete=False).name
+            ok_cut = cut_extended_vertical(vod_path, ko_ts, extend_sec, tmp_extended, log_fn=capture)
+            if ok_cut:
+                render_source = tmp_extended
+            else:
+                capture("⚠️  Extended cut failed — rendering standard 13s clip.")
+        else:
+            capture("⚠️  VOD not found for extend — rendering standard 13s clip.")
+
+    try:
+        ok = render_with_text(render_source, above, below, output_path, log_fn=capture, hook=hook, hook_offset=hook_offset)
+    finally:
+        if tmp_extended and os.path.exists(tmp_extended):
+            try:
+                os.unlink(tmp_extended)
+            except Exception:
+                pass
 
     if ok:
         return jsonify({"ok": True, "path": output_rel, "logs": logs})
@@ -432,7 +463,7 @@ def run_pipeline(url, local_path='', start_sec=None, end_sec=None):
         meta_path = os.path.join(clips_dir, "meta.json")
         if not os.path.exists(meta_path):
             with open(meta_path, "w") as f:
-                json.dump({"venue": video_title, "source": url or local_path}, f, indent=2)
+                json.dump({"venue": video_title, "source": url or local_path, "vod_path": video_path}, f, indent=2)
         cut_clips(video_path, events, output_dir=clips_dir, log_fn=log)
 
         log(f"\n✅  Done! Clips saved to: {os.path.abspath(clips_dir)}")
@@ -495,6 +526,14 @@ def download_vod(url):
 def _clip_num(filename):
     m = re.search(r'clip_(\d+)_', filename)
     return int(m.group(1)) if m else 0
+
+
+def _parse_ko_ts_from_filename(filename):
+    """Parse KO timestamp (seconds) from a clip filename like clip_1_5m23s_vertical.mp4."""
+    m = re.search(r'_(\d+)m(\d+)s', filename)
+    if m:
+        return int(m.group(1)) * 60 + int(m.group(2))
+    return None
 
 
 def safe_folder_name(title):
