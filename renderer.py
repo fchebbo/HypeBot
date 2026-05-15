@@ -594,3 +594,140 @@ def render_stitch(
                 os.unlink(f)
             except Exception:
                 pass
+
+
+# ── Montage ──────────────────────────────────────────────────────────────────
+
+def _concat_segments(segments, transition, output_path, log_fn):
+    """Concatenate pre-extracted segment files with the given transition."""
+    n = len(segments)
+    inputs = []
+    for seg in segments:
+        inputs += ['-i', seg['path']]
+
+    if transition == 'cut':
+        filter_str = (
+            ''.join(f'[{i}:v][{i}:a]' for i in range(n)) +
+            f'concat=n={n}:v=1:a=1[outv][outa]'
+        )
+        cmd = ['ffmpeg', '-y'] + inputs + [
+            '-filter_complex', filter_str,
+            '-map', '[outv]', '-map', '[outa]',
+            '-c:v', 'libx264', '-c:a', 'aac', '-preset', 'ultrafast',
+            output_path,
+        ]
+    else:
+        xfade_map = {'fade': 'fade', 'crossfade': 'dissolve', 'flash': 'fadewhite'}
+        xfade_type = xfade_map.get(transition, 'fade')
+        T = 0.3  # transition duration in seconds
+
+        v_parts, a_parts = [], []
+        cumulative = 0.0
+        for k in range(n - 1):
+            src_v = f'[{k}:v]'  if k == 0 else f'[xv{k}]'
+            src_a = f'[{k}:a]'  if k == 0 else f'[xa{k}]'
+            out_v = f'[xv{k+1}]'
+            out_a = f'[xa{k+1}]'
+            cumulative += segments[k]['duration']
+            offset = round(max(0.0, cumulative - (k + 1) * T), 3)
+            v_parts.append(f'{src_v}[{k+1}:v]xfade=transition={xfade_type}:duration={T}:offset={offset}{out_v}')
+            a_parts.append(f'{src_a}[{k+1}:a]acrossfade=d={T}{out_a}')
+
+        filter_str = ';'.join(v_parts + a_parts)
+        cmd = ['ffmpeg', '-y'] + inputs + [
+            '-filter_complex', filter_str,
+            '-map', f'[xv{n-1}]', '-map', f'[xa{n-1}]',
+            '-c:v', 'libx264', '-c:a', 'aac', '-preset', 'ultrafast',
+            output_path,
+        ]
+
+    try:
+        r = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, timeout=FFMPEG_TIMEOUT)
+        if r.returncode != 0:
+            log_fn("❌  FFmpeg concat error: " + r.stderr.decode(errors='replace')[-400:])
+            return False
+        return True
+    except subprocess.TimeoutExpired:
+        log_fn("⚠️  FFmpeg concat timed out.")
+        return False
+
+
+def render_montage(clips_info, top_text, transition, output_path, log_fn=print):
+    """
+    clips_info: list of {path, hook_offset, end_early}
+    transition: 'cut' | 'fade' | 'crossfade' | 'flash'
+    """
+    tmp_files = []
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+
+    try:
+        segments = []
+        for i, info in enumerate(clips_info):
+            cap = cv2.VideoCapture(info['path'])
+            fps = cap.get(cv2.CAP_PROP_FPS) or 30
+            total_dur = cap.get(cv2.CAP_PROP_FRAME_COUNT) / fps
+            cap.release()
+
+            hook_offset = float(info.get('hook_offset', 5.0))
+            end_early   = float(info.get('end_early', 0.0))
+            seg_start   = round(max(0.0, total_dur - hook_offset), 3)
+            seg_dur     = round(hook_offset - end_early, 3)
+
+            if seg_dur <= 0:
+                log_fn(f"⚠️  Clip {i+1}: end_early >= hook_offset — skipping.")
+                continue
+
+            seg_path = tempfile.NamedTemporaryFile(suffix='.mp4', delete=False).name
+            tmp_files.append(seg_path)
+
+            log_fn(f"✂️  [{i+1}/{len(clips_info)}]  hook={hook_offset}s  early={end_early}s  → {seg_start:.2f}s–{seg_start+seg_dur:.2f}s  ({seg_dur:.2f}s)  {os.path.basename(info['path'])}")
+            cmd = [
+                'ffmpeg', '-y',
+                '-ss', str(seg_start),
+                '-i', info['path'],
+                '-t', str(seg_dur),
+                '-c:v', 'libx264', '-c:a', 'aac', '-preset', 'ultrafast',
+                seg_path,
+            ]
+            try:
+                r = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, timeout=FFMPEG_TIMEOUT)
+                if r.returncode != 0:
+                    log_fn(f"❌  Clip {i+1} extraction failed: " + r.stderr.decode(errors='replace')[-200:])
+                    return False
+            except subprocess.TimeoutExpired:
+                log_fn(f"⚠️  Clip {i+1} extraction timed out.")
+                return False
+            segments.append({'path': seg_path, 'duration': seg_dur})
+
+        if len(segments) < 2:
+            log_fn("❌  Need at least 2 valid clips for a montage.")
+            return False
+
+        use_text = bool(top_text and top_text.strip())
+        if use_text:
+            concat_tmp = tempfile.NamedTemporaryFile(suffix='.mp4', delete=False).name
+            tmp_files.append(concat_tmp)
+        else:
+            concat_tmp = output_path
+
+        log_fn(f"🎬  Joining {len(segments)} clips with '{transition}' transition...")
+        if not _concat_segments(segments, transition, concat_tmp, log_fn):
+            return False
+
+        if use_text:
+            log_fn("🎨  Burning top text...")
+            if not render_with_text(concat_tmp, top_text, None, output_path, log_fn=log_fn):
+                return False
+
+        log_fn("✅  Montage complete.")
+        return True
+
+    except Exception as e:
+        log_fn(f"❌  {e}")
+        return False
+    finally:
+        for f in tmp_files:
+            try:
+                os.unlink(f)
+            except Exception:
+                pass

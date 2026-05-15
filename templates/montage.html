@@ -1,0 +1,316 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>HypeBot — Montage</title>
+  <style>
+    :root {
+      --bg:      #0e0e0e;
+      --surface: #1a1a1a;
+      --border:  #2e2e2e;
+      --fg:      #f0f0f0;
+      --muted:   #666;
+      --accent:  #e8ff00;
+      --red:     #ff3b3b;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { background: var(--bg); color: var(--fg); font-family: 'Arial', sans-serif; font-size: 13px; padding: 32px 24px; max-width: 800px; margin: 0 auto; }
+    h1 { font-size: 18px; letter-spacing: 2px; text-transform: uppercase; margin-bottom: 6px; }
+    .back { color: var(--muted); font-size: 11px; margin-bottom: 28px; display: block; text-decoration: none; }
+    .back:hover { color: var(--fg); }
+    .section { background: var(--surface); border: 1px solid var(--border); border-radius: 4px; padding: 20px; margin-bottom: 16px; }
+    .section-title { font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: var(--muted); margin-bottom: 14px; }
+    .row { display: flex; gap: 12px; margin-bottom: 12px; align-items: flex-end; }
+    .row:last-child { margin-bottom: 0; }
+    .field { display: flex; flex-direction: column; gap: 5px; flex: 1; }
+    .field label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; }
+    .field input, .field select {
+      background: var(--bg); border: 1px solid var(--border); color: var(--fg);
+      padding: 8px 10px; font-size: 13px; border-radius: 2px; width: 100%;
+      outline: none; transition: border-color 0.15s;
+    }
+    .field input:focus, .field select:focus { border-color: var(--accent); }
+    .field select option { background: var(--bg); }
+    .field.narrow { max-width: 110px; }
+
+    /* clip slots */
+    .slot { border: 1px solid var(--border); border-radius: 3px; padding: 16px; margin-bottom: 12px; background: var(--bg); }
+    .slot:last-child { margin-bottom: 0; }
+    .slot-header { font-size: 10px; letter-spacing: 1.5px; text-transform: uppercase; color: var(--accent); margin-bottom: 12px; }
+    .preview-wrap { margin-top: 10px; display: none; }
+    .preview-wrap video { width: 100%; max-width: 240px; border-radius: 2px; border: 1px solid var(--border); display: block; }
+
+    /* options */
+    .options-row { display: flex; gap: 16px; align-items: flex-end; }
+
+    /* render */
+    .render-btn {
+      background: var(--accent); color: #000; border: none; padding: 12px 32px;
+      font-size: 13px; font-weight: bold; letter-spacing: 2px; text-transform: uppercase;
+      cursor: pointer; border-radius: 2px; width: 100%; margin-top: 8px;
+    }
+    .render-btn:hover { background: #fff; }
+    .render-btn:disabled { background: var(--border); color: var(--muted); cursor: not-allowed; }
+
+    /* log */
+    .log-label { font-size: 10px; text-transform: uppercase; letter-spacing: 1px; color: var(--muted); margin: 20px 0 6px; }
+    .log-box { background: #000; border: 1px solid var(--border); border-radius: 2px; padding: 12px; height: 180px; overflow-y: auto; font-size: 11px; font-family: monospace; line-height: 1.6; }
+    .log-line.error { color: #ff6b6b; }
+    .done-banner { background: #1a2e1a; border: 1px solid #2e4a2e; color: #7fff7f; padding: 12px 16px; border-radius: 2px; margin-top: 12px; display: none; font-size: 12px; }
+    .result-wrap { margin-top: 20px; display: none; }
+    .result-wrap .result-label { font-size: 10px; letter-spacing: 1.5px; text-transform: uppercase; color: var(--muted); margin-bottom: 10px; }
+    .result-wrap video { width: 100%; max-width: 360px; border-radius: 2px; border: 1px solid var(--border); display: block; margin: 0 auto; }
+  </style>
+</head>
+<body>
+  <h1>Montage Builder</h1>
+  <a class="back" href="/">← Back to HypeBot</a>
+
+  <!-- Session -->
+  <div class="section">
+    <div class="section-title">Session</div>
+    <div class="field">
+      <label>Session</label>
+      <select id="sessionSel" onchange="onSessionChange()">
+        <option value="">— select session —</option>
+      </select>
+    </div>
+  </div>
+
+  <!-- Clip count -->
+  <div class="section">
+    <div class="section-title">Clips</div>
+    <div class="row">
+      <div class="field narrow">
+        <label>Number of clips</label>
+        <input id="clipCount" type="number" value="2" min="2" max="20" step="1" onchange="onCountChange()">
+      </div>
+    </div>
+    <div id="slotsContainer"></div>
+  </div>
+
+  <!-- Options -->
+  <div class="section">
+    <div class="section-title">Options</div>
+    <div class="options-row">
+      <div class="field">
+        <label>Transition</label>
+        <select id="transitionSel">
+          <option value="cut">Cut (instant)</option>
+          <option value="flash" selected>Flash to White</option>
+          <option value="fade">Fade to Black</option>
+          <option value="crossfade">Crossfade (dissolve)</option>
+        </select>
+      </div>
+      <div class="field">
+        <label>Top text</label>
+        <input id="topText" type="text" placeholder="e.g. LITTLE MAC WINS A LOCAL">
+      </div>
+    </div>
+  </div>
+
+  <button class="render-btn" id="renderBtn" onclick="startMontage()">RENDER MONTAGE</button>
+
+  <div class="log-label">Log</div>
+  <div class="log-box" id="logBox"></div>
+  <div class="done-banner" id="doneBanner">✅ &nbsp; Montage complete</div>
+
+  <div class="result-wrap" id="resultWrap">
+    <div class="result-label">Result</div>
+    <video id="resultVideo" controls preload="auto"></video>
+  </div>
+
+  <script>
+    let evtSource   = null;
+    let sessionClips = [];
+
+    // ── init ──────────────────────────────────────────────────────────────────
+
+    async function loadSessions() {
+      const res  = await fetch('/clips-list');
+      const data = await res.json();
+      const sel  = document.getElementById('sessionSel');
+      (data.sessions || []).forEach(s => {
+        const o = document.createElement('option');
+        o.value = s.title;
+        o.textContent = s.title;
+        sel.appendChild(o);
+      });
+      buildSlots(parseInt(document.getElementById('clipCount').value, 10));
+    }
+
+    function onSessionChange() {
+      const session = document.getElementById('sessionSel').value;
+      sessionClips = [];
+      if (!session) { repopulateAllDropdowns(); return; }
+
+      fetch('/clips-list').then(r => r.json()).then(data => {
+        const s = (data.sessions || []).find(s => s.title === session);
+        sessionClips = s ? s.clips : [];
+        repopulateAllDropdowns();
+      });
+    }
+
+    function onCountChange() {
+      const n = Math.max(2, Math.min(20, parseInt(document.getElementById('clipCount').value, 10) || 2));
+      document.getElementById('clipCount').value = n;
+      buildSlots(n);
+    }
+
+    // ── slot management ───────────────────────────────────────────────────────
+
+    function buildSlots(n) {
+      const container = document.getElementById('slotsContainer');
+      const existing  = container.querySelectorAll('.slot');
+
+      // add missing slots
+      for (let i = existing.length + 1; i <= n; i++) {
+        container.appendChild(makeSlot(i));
+      }
+      // remove extra slots
+      const all = container.querySelectorAll('.slot');
+      for (let i = all.length; i > n; i--) {
+        container.removeChild(all[i - 1]);
+      }
+    }
+
+    function makeSlot(idx) {
+      const slot = document.createElement('div');
+      slot.className = 'slot';
+      slot.dataset.idx = idx;
+
+      slot.innerHTML = `
+        <div class="slot-header">Clip ${idx}</div>
+        <div class="row">
+          <div class="field">
+            <label>Clip</label>
+            <select class="clip-sel" onchange="updateSlotPreview(${idx})">
+              <option value="">— select clip —</option>
+            </select>
+          </div>
+          <div class="field narrow">
+            <label>KO Hook (s)</label>
+            <input class="hook-in" type="number" value="5" min="0.5" max="13" step="0.5">
+          </div>
+          <div class="field narrow">
+            <label>End Early (s)</label>
+            <input class="early-in" type="number" value="0" min="0" max="12" step="0.5">
+          </div>
+        </div>
+        <div class="preview-wrap" id="preview-wrap-${idx}">
+          <video id="preview-${idx}" controls preload="none"></video>
+        </div>
+      `;
+
+      populateClipDropdown(slot.querySelector('.clip-sel'));
+      return slot;
+    }
+
+    function populateClipDropdown(sel) {
+      const current = sel.value;
+      sel.innerHTML = '<option value="">— select clip —</option>';
+      sessionClips.forEach(c => {
+        const fname = c.vertical.split('/').pop();
+        const o = document.createElement('option');
+        o.value = fname;
+        o.textContent = c.name;
+        if (fname === current) o.selected = true;
+        sel.appendChild(o);
+      });
+    }
+
+    function repopulateAllDropdowns() {
+      document.querySelectorAll('.slot .clip-sel').forEach(sel => populateClipDropdown(sel));
+    }
+
+    function updateSlotPreview(idx) {
+      const session  = document.getElementById('sessionSel').value;
+      const slot     = document.querySelector(`.slot[data-idx="${idx}"]`);
+      const filename = slot.querySelector('.clip-sel').value;
+      const wrap     = document.getElementById(`preview-wrap-${idx}`);
+      const video    = document.getElementById(`preview-${idx}`);
+      if (!session || !filename) { wrap.style.display = 'none'; return; }
+      video.src = `/clips-serve/${encodeURIComponent(session)}/vertical/${encodeURIComponent(filename)}`;
+      video.load();
+      wrap.style.display = 'block';
+    }
+
+    // ── render ────────────────────────────────────────────────────────────────
+
+    function startMontage() {
+      const session = document.getElementById('sessionSel').value;
+      if (!session) { alert('Select a session first.'); return; }
+
+      const slots = document.querySelectorAll('.slot');
+      const clips = [];
+      let valid = true;
+      slots.forEach(slot => {
+        const clip = slot.querySelector('.clip-sel').value;
+        if (!clip) { valid = false; return; }
+        clips.push({
+          clip:        clip,
+          hook_offset: parseFloat(slot.querySelector('.hook-in').value)  || 5,
+          end_early:   parseFloat(slot.querySelector('.early-in').value) || 0,
+        });
+      });
+
+      if (!valid || clips.length < 2) {
+        alert('Select a clip for every slot.');
+        return;
+      }
+
+      document.getElementById('renderBtn').disabled = true;
+      document.getElementById('doneBanner').style.display = 'none';
+      document.getElementById('resultWrap').style.display = 'none';
+      document.getElementById('logBox').innerHTML = '';
+
+      fetch('/run-montage', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          session,
+          top_text:   document.getElementById('topText').value.trim(),
+          transition: document.getElementById('transitionSel').value,
+          clips,
+        }),
+      });
+
+      if (evtSource) evtSource.close();
+      evtSource = new EventSource('/logs');
+      evtSource.onmessage = e => {
+        const msg = e.data;
+        if (msg === '__keepalive__') return;
+
+        if (msg.startsWith('__montage_done__:')) {
+          const rel = msg.split(':').slice(1).join(':');
+          evtSource.close();
+          document.getElementById('renderBtn').disabled = false;
+          document.getElementById('doneBanner').style.display = 'block';
+          const wrap  = document.getElementById('resultWrap');
+          const video = document.getElementById('resultVideo');
+          video.src = `/clips-serve/${rel.split('/').map(encodeURIComponent).join('/')}?t=${Date.now()}`;
+          video.load();
+          wrap.style.display = 'block';
+          return;
+        }
+        if (msg === '__montage_failed__') {
+          evtSource.close();
+          document.getElementById('renderBtn').disabled = false;
+          return;
+        }
+
+        const logBox = document.getElementById('logBox');
+        const line   = document.createElement('span');
+        line.className = 'log-line' + (msg.includes('❌') || msg.includes('⚠️') ? ' error' : '');
+        line.textContent = msg;
+        logBox.appendChild(line);
+        logBox.appendChild(document.createElement('br'));
+        logBox.scrollTop = logBox.scrollHeight;
+      };
+    }
+
+    loadSessions();
+  </script>
+</body>
+</html>

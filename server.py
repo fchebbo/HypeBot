@@ -4,12 +4,13 @@ import os
 import re
 import shutil
 import tempfile
+import time
 import threading
 import queue
 import subprocess
 import yt_dlp
 from detector import detect_ko_events, cut_clips, cut_extended_vertical
-from renderer import render_with_text, render_stitch, render_replay
+from renderer import render_with_text, render_stitch, render_replay, render_montage
 
 app = Flask(__name__)
 log_queue = queue.Queue()
@@ -386,9 +387,56 @@ def run_stitch():
     return jsonify({"status": "started"})
 
 
+@app.route("/montage")
+def montage_page():
+    return render_template("montage.html")
+
+
+@app.route("/run-montage", methods=["POST"])
+def run_montage():
+    data       = request.get_json()
+    session    = data.get("session", "").strip()
+    top_text   = data.get("top_text", "").strip()
+    transition = data.get("transition", "cut").strip()
+    clips_data = data.get("clips", [])
+
+    if not session or len(clips_data) < 2:
+        return jsonify({"error": "session and at least 2 clips are required"}), 400
+
+    clips_root = os.path.abspath("clips")
+    clips_info = []
+    for c in clips_data:
+        clip_rel    = c.get("clip", "").strip()
+        hook_offset = float(c.get("hook_offset", 5.0))
+        end_early   = float(c.get("end_early", 0.0))
+        if not clip_rel:
+            return jsonify({"error": "Each clip entry must have a clip filename"}), 400
+        clip_path = os.path.join(clips_root, session, "vertical", clip_rel)
+        if not os.path.exists(clip_path):
+            return jsonify({"error": f"Clip not found: {clip_rel}"}), 404
+        clips_info.append({"path": clip_path, "hook_offset": hook_offset, "end_early": end_early})
+
+    out_name    = f"montage_{int(time.time())}.mp4"
+    output_dir  = os.path.join(clips_root, session, "montage")
+    output_path = os.path.join(output_dir, out_name)
+    output_rel  = f"{session}/montage/{out_name}"
+
+    def do_montage():
+        ok = render_montage(clips_info, top_text, transition, output_path, log_fn=log)
+        if ok:
+            log(f"__montage_done__:{output_rel}")
+        else:
+            log("__montage_failed__")
+
+    threading.Thread(target=do_montage, daemon=True).start()
+    return jsonify({"status": "started"})
+
+
 @app.route("/clips-serve/<path:filename>")
 def serve_clip(filename):
-    return send_from_directory(os.path.abspath('clips'), filename)
+    resp = send_from_directory(os.path.abspath('clips'), filename)
+    resp.headers['Cache-Control'] = 'no-store'
+    return resp
 
 
 @app.route("/run", methods=["POST"])

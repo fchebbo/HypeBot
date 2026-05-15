@@ -79,6 +79,24 @@
       color: var(--muted);
       margin-top: 8px;
     }
+    .nav-tools {
+      display: flex;
+      justify-content: center;
+      gap: 12px;
+      margin-top: 14px;
+    }
+    .nav-tool {
+      font-size: 10px;
+      letter-spacing: 0.15em;
+      text-transform: uppercase;
+      color: var(--muted);
+      text-decoration: none;
+      border: 1px solid var(--border);
+      border-radius: 2px;
+      padding: 4px 12px;
+      transition: color 0.15s, border-color 0.15s;
+    }
+    .nav-tool:hover { color: var(--accent); border-color: var(--accent); }
 
     /* ── card ── */
     .card {
@@ -706,6 +724,11 @@
   <header class="header">
     <div class="logo">HYPE<span>BOT</span></div>
     <p class="tagline">Smash Ultimate · Auto Clipper · Shorts Generator</p>
+    <nav class="nav-tools">
+      <a class="nav-tool" href="/replay">Replay</a>
+      <a class="nav-tool" href="/stitch">Stitch</a>
+      <a class="nav-tool" href="/montage">Montage</a>
+    </nav>
   </header>
 
   <div class="card">
