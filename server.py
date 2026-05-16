@@ -10,7 +10,7 @@ import queue
 import subprocess
 import yt_dlp
 from detector import detect_ko_events, cut_clips, cut_extended_vertical
-from renderer import render_with_text, render_stitch, render_replay, render_montage
+from renderer import render_with_text, render_stitch, render_replay, render_montage, render_dankify
 
 app = Flask(__name__)
 log_queue = queue.Queue()
@@ -218,9 +218,10 @@ def render_text_route():
     clip_rel    = data.get("clip", "").strip()
     above       = data.get("above", "").strip()
     below       = data.get("below", "").strip()
-    hook        = bool(data.get("hook", False))
-    hook_offset = float(data.get("hook_offset", 2.8))
-    extend_sec  = float(data.get("extend_sec", 0.0))
+    hook            = bool(data.get("hook", False))
+    hook_offset     = float(data.get("hook_offset", 2.8))
+    extend_sec      = float(data.get("extend_sec", 0.0))
+    normalize_audio = bool(data.get("normalize_audio", False))
 
     if not clip_rel:
         return jsonify({"error": "No clip specified"}), 400
@@ -269,7 +270,7 @@ def render_text_route():
             capture("⚠️  VOD not found for extend — rendering standard 13s clip.")
 
     try:
-        ok = render_with_text(render_source, above, below, output_path, log_fn=capture, hook=hook, hook_offset=hook_offset)
+        ok = render_with_text(render_source, above, below, output_path, log_fn=capture, hook=hook, hook_offset=hook_offset, normalize_audio=normalize_audio)
     finally:
         if tmp_extended and os.path.exists(tmp_extended):
             try:
@@ -384,6 +385,43 @@ def run_stitch():
             log("__stitch_failed__")
 
     threading.Thread(target=do_stitch, daemon=True).start()
+    return jsonify({"status": "started"})
+
+
+@app.route("/dankify")
+def dankify_page():
+    return render_template("dankify.html")
+
+
+@app.route("/run-dankify", methods=["POST"])
+def run_dankify():
+    data       = request.get_json()
+    session    = data.get("session", "").strip()
+    clip_rel   = data.get("clip", "").strip()
+    hook_start = float(data.get("hook_start", 0))
+
+    if not session or not clip_rel:
+        return jsonify({"error": "session and clip are required"}), 400
+
+    clips_root = os.path.abspath("clips")
+    clip_path  = os.path.join(clips_root, session, "vertical", clip_rel)
+    if not os.path.exists(clip_path):
+        return jsonify({"error": "Clip not found"}), 404
+
+    base        = clip_rel.replace("_vertical.mp4", "")
+    out_name    = f"{base}_dankify.mp4"
+    output_dir  = os.path.join(clips_root, session, "dankify")
+    output_path = os.path.join(output_dir, out_name)
+    output_rel  = f"{session}/dankify/{out_name}"
+
+    def do_dankify():
+        ok = render_dankify(clip_path, hook_start, output_path, log_fn=log)
+        if ok:
+            log(f"__dankify_done__:{output_rel}")
+        else:
+            log("__dankify_failed__")
+
+    threading.Thread(target=do_dankify, daemon=True).start()
     return jsonify({"status": "started"})
 
 

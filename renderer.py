@@ -148,7 +148,7 @@ def _draw_bar_text(draw, text, clip_w, bar_top, bar_bottom, max_size=120, min_si
         y += line_h + line_gap
 
 
-def render_with_text(clip_path, above_text, below_text, output_path, log_fn=print, hook=False, hook_offset=2.8):
+def render_with_text(clip_path, above_text, below_text, output_path, log_fn=print, hook=False, hook_offset=2.8, normalize_audio=False):
     cap        = cv2.VideoCapture(clip_path)
     clip_w     = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     clip_h     = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
@@ -179,16 +179,21 @@ def render_with_text(clip_path, above_text, below_text, output_path, log_fn=prin
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
     log_fn("🎬  Encoding final clip...")
 
+    if normalize_audio:
+        log_fn("🔊  Audio normalization: on (compressor + hard limiter)")
+
     if hook:
         hook_start = round(max(0.0, total_dur - hook_offset), 3)
         log_fn(f"🪝  Hook: prepending last {hook_offset}s (from {hook_start:.2f}s)")
+        audio_tail = "[ha][fa]concat=n=2:v=0:a=1[ca_pre];[ca_pre]acompressor=threshold=0.063:ratio=15:attack=100:release=800,alimiter=limit=0.65:level=disabled[ca]" if normalize_audio \
+                else "[ha][fa]concat=n=2:v=0:a=1[ca]"
         filter_complex = (
             f"[0:v]trim=start={hook_start},setpts=PTS-STARTPTS[hv];"
             f"[0:a]atrim=start={hook_start},asetpts=PTS-STARTPTS[ha];"
             f"[0:v]setpts=PTS-STARTPTS[fv];"
             f"[0:a]asetpts=PTS-STARTPTS[fa];"
             f"[hv][fv]concat=n=2:v=1:a=0[cv];"
-            f"[ha][fa]concat=n=2:v=0:a=1[ca];"
+            f"{audio_tail};"
             f"[cv][1:v]overlay=0:0[outv]"
         )
         cmd = [
@@ -204,12 +209,14 @@ def render_with_text(clip_path, above_text, below_text, output_path, log_fn=prin
             output_path,
         ]
     else:
+        af_args = ['-af', 'acompressor=threshold=0.063:ratio=15:attack=100:release=800,alimiter=limit=0.65:level=disabled'] if normalize_audio else []
         cmd = [
             'ffmpeg', '-y',
             '-i', clip_path,
             '-i', tmp_path,
             '-filter_complex', '[0:v][1:v]overlay=0:0',
             '-c:v', 'libx264',
+            *af_args,
             '-c:a', 'aac',
             '-preset', 'ultrafast',
             output_path,
@@ -720,6 +727,171 @@ def render_montage(clips_info, top_text, transition, output_path, log_fn=print):
                 return False
 
         log_fn("✅  Montage complete.")
+        return True
+
+    except Exception as e:
+        log_fn(f"❌  {e}")
+        return False
+    finally:
+        for f in tmp_files:
+            try:
+                os.unlink(f)
+            except Exception:
+                pass
+
+
+# ── Dankify ───────────────────────────────────────────────────────────────────
+
+# Each replay pass: (top_bar_text, xfade_transition_into_this_segment)
+_DANKIFY_EFFECTS = [
+    # (top_text, xfade_transition_into_this_segment)
+    ("HE",       "dissolve"),
+    ("HIT",      "wipeleft"),
+    ("THAT?!!?", "fadewhite"),
+]
+
+_FFMPEG_FONT = _IMPACT.replace('\\', '/').replace('C:/', 'C\\:/')
+
+
+def _run(cmd, label, log_fn):
+    """Run an FFmpeg command, log on failure, return success bool."""
+    try:
+        r = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, timeout=FFMPEG_TIMEOUT)
+        if r.returncode != 0:
+            log_fn(f"❌  {label}: " + r.stderr.decode(errors='replace')[-300:])
+            return False
+        return True
+    except subprocess.TimeoutExpired:
+        log_fn(f"⚠️  {label} timed out.")
+        return False
+
+
+def _extract(clip_path, ss, duration, vfilter, aspeed, out_path, label, log_fn):
+    """Extract a segment with optional video filter and audio speed."""
+    cmd = ['ffmpeg', '-y', '-i', clip_path,
+           '-ss', str(round(ss, 3)),
+           '-t',  str(round(duration, 3))]
+    if vfilter:
+        cmd += ['-vf', vfilter]
+    if aspeed != 1.0:
+        cmd += ['-af', f'atempo={aspeed}']
+    cmd += ['-c:v', 'libx264', '-c:a', 'aac', '-preset', 'ultrafast', out_path]
+    return _run(cmd, label, log_fn)
+
+
+def render_dankify(clip_path, hook_start, output_path, log_fn=print):
+    """
+    Dankify sequence: hook → N replays of the same segment with varied transitions
+    and "Montage Time!" burned into the top bar of each replay.
+    All timestamps are seconds from the start of the vertical clip.
+    """
+    tmp_files = []
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+
+    try:
+        cap = cv2.VideoCapture(clip_path)
+        clip_w    = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        clip_h    = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        fps       = cap.get(cv2.CAP_PROP_FPS) or 30
+        total_dur = cap.get(cv2.CAP_PROP_FRAME_COUNT) / fps
+        cap.release()
+
+        if not clip_w or not clip_h:
+            log_fn("❌  Could not read clip dimensions.")
+            return False
+
+        hook_dur = round(total_dur - hook_start, 3)
+        if hook_dur <= 0:
+            log_fn("❌  hook_start must be before clip end.")
+            return False
+
+        # Top-bar geometry for per-replay text
+        fg_h = int(clip_w * 9 / 16)
+        fg_h = fg_h if fg_h % 2 == 0 else fg_h - 1
+        fg_y = (clip_h - fg_h) // 2
+
+        def _text_vf(text):
+            safe = text.replace('\\', '\\\\').replace(':', '\\:')
+            return (
+                f"drawtext=fontfile='{_FFMPEG_FONT}':text='{safe}'"
+                f":x=(w-tw)/2:y=({fg_y}-th)/2"
+                f":fontsize=96:fontcolor=white:borderw=5:bordercolor=black"
+            )
+
+        def tmp():
+            p = tempfile.NamedTemporaryFile(suffix='.mp4', delete=False).name
+            tmp_files.append(p)
+            return p
+
+        # ── 1. Hook ───────────────────────────────────────────────────────────
+        log_fn("🎬  Extracting hook...")
+        hook_path = tmp()
+        if not _run([
+            'ffmpeg', '-y',
+            '-ss', str(round(hook_start, 3)), '-i', clip_path,
+            '-t', str(round(hook_dur, 3)),
+            '-vf', f"setpts=PTS-STARTPTS,{_text_vf('OMG!')}",
+            '-af', 'asetpts=PTS-STARTPTS',
+            '-c:v', 'libx264', '-c:a', 'aac', '-preset', 'ultrafast', hook_path,
+        ], "hook", log_fn):
+            return False
+
+        # ── 2. Replay passes ──────────────────────────────────────────────────
+        # Each entry: (path, duration, xfade_transition_into_this_seg)
+        replay_segs = []
+        for i, (top_text, xfade_tr) in enumerate(_DANKIFY_EFFECTS):
+            log_fn(f"🎨  Replay {i+1}/{len(_DANKIFY_EFFECTS)}: {top_text}...")
+            seg = tmp()
+            vf = f"setpts=PTS-STARTPTS,{_text_vf(top_text)}"
+            cmd = ['ffmpeg', '-y',
+                   '-ss', str(round(hook_start, 3)), '-i', clip_path,
+                   '-t',  str(round(hook_dur, 3)),
+                   '-vf', vf, '-af', 'asetpts=PTS-STARTPTS',
+                   '-c:v', 'libx264', '-c:a', 'aac', '-preset', 'ultrafast', seg]
+            if _run(cmd, top_text, log_fn):
+                replay_segs.append((seg, hook_dur, xfade_tr))
+            else:
+                log_fn(f"⚠️  Skipping {top_text}.")
+
+        if not replay_segs:
+            log_fn("❌  All replays failed.")
+            return False
+
+        # ── 3. Join with varied xfade transitions ─────────────────────────────
+        all_segs  = [(hook_path, hook_dur)] + [(s, d) for s, d, _ in replay_segs]
+        xfade_trs = [tr for _, _, tr in replay_segs]  # transition into each replay
+        n = len(all_segs)
+        T = 0.5  # transition duration in seconds
+
+        log_fn(f"🔗  Joining {n} segments...")
+        inputs = []
+        for seg, _ in all_segs:
+            inputs += ['-i', seg]
+
+        v_parts, a_parts = [], []
+        cumulative = 0.0
+        for k in range(n - 1):
+            src_v = f'[{k}:v]' if k == 0 else f'[xv{k}]'
+            src_a = f'[{k}:a]' if k == 0 else f'[xa{k}]'
+            out_v = f'[xv{k+1}]'
+            out_a = f'[xa{k+1}]'
+            cumulative += all_segs[k][1]
+            offset = round(max(0.0, cumulative - (k + 1) * T), 3)
+            tr = xfade_trs[k]
+            v_parts.append(f'{src_v}[{k+1}:v]xfade=transition={tr}:duration={T}:offset={offset}{out_v}')
+            a_parts.append(f'{src_a}[{k+1}:a]acrossfade=d={T}{out_a}')
+
+        filter_str = ';'.join(v_parts + a_parts)
+        if not _run([
+            'ffmpeg', '-y'] + inputs + [
+            '-filter_complex', filter_str,
+            '-map', f'[xv{n-1}]', '-map', f'[xa{n-1}]',
+            '-c:v', 'libx264', '-c:a', 'aac', '-preset', 'ultrafast',
+            output_path,
+        ], "join", log_fn):
+            return False
+
+        log_fn("✅  Dankify complete!")
         return True
 
     except Exception as e:

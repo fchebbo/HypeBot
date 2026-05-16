@@ -728,6 +728,7 @@
       <a class="nav-tool" href="/replay">Replay</a>
       <a class="nav-tool" href="/stitch">Stitch</a>
       <a class="nav-tool" href="/montage">Montage</a>
+      <a class="nav-tool" href="/dankify">Dankify</a>
     </nav>
   </header>
 
@@ -1306,6 +1307,17 @@
     extendRow.appendChild(extendInput);
     extendRow.appendChild(extendUnit);
 
+    const normRow = document.createElement('div');
+    normRow.className = 'hook-row';
+    const normCheck = document.createElement('input');
+    normCheck.type = 'checkbox';
+    normCheck.id = `norm-${clip.name}`;
+    const normLabel = document.createElement('label');
+    normLabel.htmlFor = `norm-${clip.name}`;
+    normLabel.textContent = 'Tame loud audio (compressor + limiter)';
+    normRow.appendChild(normCheck);
+    normRow.appendChild(normLabel);
+
     const aboveInput = document.createElement('input');
     aboveInput.className = 'hook-input';
     aboveInput.placeholder = 'ABOVE text (optional)';
@@ -1335,9 +1347,10 @@
             clip:        clip.vertical,
             above:       aboveInput.value.trim(),
             below:       belowInput.value.trim(),
-            hook:        hookCheck.checked,
-            hook_offset: parseFloat(hookOffsetInput.value) || 2.8,
-            extend_sec:  parseFloat(extendInput.value) || 0,
+            hook:            hookCheck.checked,
+            hook_offset:     parseFloat(hookOffsetInput.value) || 2.8,
+            extend_sec:      parseFloat(extendInput.value) || 0,
+            normalize_audio: normCheck.checked,
           }),
         });
         const data = await res.json();
@@ -1367,6 +1380,7 @@
 
     textPanel.appendChild(hookRow);
     textPanel.appendChild(extendRow);
+    textPanel.appendChild(normRow);
     textPanel.appendChild(aboveInput);
     textPanel.appendChild(belowInput);
     textPanel.appendChild(renderBtn);

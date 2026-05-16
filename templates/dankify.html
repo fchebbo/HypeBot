@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>HypeBot — Dankify</title>
+  <style>
+    :root {
+      --bg:      #0e0e0e;
+      --surface: #1a1a1a;
+      --border:  #2e2e2e;
+      --fg:      #f0f0f0;
+      --muted:   #666;
+      --accent:  #e8ff00;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { background: var(--bg); color: var(--fg); font-family: 'Arial', sans-serif; font-size: 13px; padding: 32px 24px; max-width: 720px; margin: 0 auto; }
+    h1 { font-size: 18px; letter-spacing: 2px; text-transform: uppercase; margin-bottom: 4px; }
+    .subtitle { font-size: 11px; color: var(--muted); letter-spacing: 0.1em; margin-bottom: 28px; }
+    .back { color: var(--muted); font-size: 11px; margin-bottom: 28px; display: block; text-decoration: none; }
+    .back:hover { color: var(--fg); }
+    .section { background: var(--surface); border: 1px solid var(--border); border-radius: 4px; padding: 20px; margin-bottom: 16px; }
+    .section-title { font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: var(--muted); margin-bottom: 14px; }
+    .row { display: flex; gap: 12px; margin-bottom: 12px; align-items: flex-end; }
+    .row:last-child { margin-bottom: 0; }
+    .field { display: flex; flex-direction: column; gap: 5px; flex: 1; }
+    .field label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; }
+    .field input, .field select {
+      background: var(--bg); border: 1px solid var(--border); color: var(--fg);
+      padding: 8px 10px; font-size: 13px; border-radius: 2px; width: 100%;
+      outline: none; transition: border-color 0.15s;
+    }
+    .field input:focus, .field select:focus { border-color: var(--accent); }
+    .field select option { background: var(--bg); }
+    .field.narrow { max-width: 120px; }
+
+    /* preview */
+    .preview-wrap { margin-top: 12px; display: none; position: relative; }
+    .preview-wrap video { width: 100%; max-width: 280px; border-radius: 2px; border: 1px solid var(--border); display: block; }
+    .ts-display {
+      margin-top: 6px; font-size: 11px; font-family: monospace;
+      color: var(--accent); letter-spacing: 0.1em;
+    }
+    .ts-hint { font-size: 10px; color: var(--muted); margin-top: 3px; }
+
+    /* timestamps */
+    .ts-row { display: flex; gap: 12px; align-items: flex-end; flex-wrap: wrap; }
+    .ts-field { display: flex; flex-direction: column; gap: 5px; flex: 1; min-width: 100px; }
+    .ts-field label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; }
+    .ts-field input {
+      background: var(--bg); border: 1px solid var(--border); color: var(--accent);
+      padding: 8px 10px; font-size: 14px; font-family: monospace; font-weight: bold;
+      border-radius: 2px; width: 100%; outline: none; transition: border-color 0.15s;
+    }
+    .ts-field input:focus { border-color: var(--accent); }
+
+    /* effects preview */
+    .effects-list { margin-top: 4px; }
+    .effect-item { font-size: 11px; color: var(--muted); padding: 3px 0; border-bottom: 1px solid var(--border); display: flex; gap: 8px; }
+    .effect-item:last-child { border-bottom: none; }
+    .effect-num { color: var(--accent); width: 18px; flex-shrink: 0; }
+
+    /* render */
+    .render-btn {
+      background: var(--accent); color: #000; border: none; padding: 14px 32px;
+      font-size: 14px; font-weight: bold; letter-spacing: 3px; text-transform: uppercase;
+      cursor: pointer; border-radius: 2px; width: 100%; margin-top: 8px;
+    }
+    .render-btn:hover { background: #fff; }
+    .render-btn:disabled { background: var(--border); color: var(--muted); cursor: not-allowed; }
+
+    /* log */
+    .log-label { font-size: 10px; text-transform: uppercase; letter-spacing: 1px; color: var(--muted); margin: 20px 0 6px; }
+    .log-box { background: #000; border: 1px solid var(--border); border-radius: 2px; padding: 12px; height: 200px; overflow-y: auto; font-size: 11px; font-family: monospace; line-height: 1.6; }
+    .log-line.error { color: #ff6b6b; }
+    .done-banner { background: #1a2e1a; border: 1px solid #2e4a2e; color: #7fff7f; padding: 12px 16px; border-radius: 2px; margin-top: 12px; display: none; font-size: 12px; }
+    .result-wrap { margin-top: 20px; display: none; }
+    .result-wrap .result-label { font-size: 10px; letter-spacing: 1.5px; text-transform: uppercase; color: var(--muted); margin-bottom: 10px; }
+    .result-wrap video { width: 100%; max-width: 360px; border-radius: 2px; border: 1px solid var(--border); display: block; margin: 0 auto; }
+  </style>
+</head>
+<body>
+  <h1>Dankify</h1>
+  <p class="subtitle">Hook → MLG replay sequence with escalating effects</p>
+  <a class="back" href="/">← Back to HypeBot</a>
+
+  <!-- Session + Clip -->
+  <div class="section">
+    <div class="section-title">Clip</div>
+    <div class="row">
+      <div class="field">
+        <label>Session</label>
+        <select id="sessionSel" onchange="onSessionChange(null)">
+          <option value="">— select session —</option>
+        </select>
+      </div>
+      <div class="field">
+        <label>Clip</label>
+        <select id="clipSel" onchange="onClipChange()">
+          <option value="">— select clip —</option>
+        </select>
+      </div>
+    </div>
+    <div class="preview-wrap" id="previewWrap">
+      <video id="preview" controls preload="none"></video>
+      <div class="ts-display" id="tsDisplay">0.000 s</div>
+      <div class="ts-hint">Scrub the video — current time updates above</div>
+    </div>
+  </div>
+
+  <!-- Timestamps -->
+  <div class="section">
+    <div class="section-title">Timestamp (seconds from clip start)</div>
+    <div class="ts-row">
+      <div class="ts-field">
+        <label>Hook start</label>
+        <input id="hookStart" type="number" value="0" min="0" step="0.1" placeholder="e.g. 9.0">
+      </div>
+    </div>
+  </div>
+
+  <!-- Effect sequence (informational) -->
+  <div class="section">
+    <div class="section-title">Replay sequence</div>
+    <div class="effects-list">
+      <div class="effect-item"><span class="effect-num">→</span>Hook — "OMG!"</div>
+      <div class="effect-item"><span class="effect-num">1</span>Replay — "HE" — dissolve</div>
+      <div class="effect-item"><span class="effect-num">2</span>Replay — "HIT" — wipe left</div>
+      <div class="effect-item"><span class="effect-num">3</span>Replay — "THAT?!!?" — fade white</div>
+    </div>
+    <p style="font-size:11px;color:var(--muted);margin-top:10px;">Different word each clip · Blurred background</p>
+  </div>
+
+  <button class="render-btn" id="renderBtn" onclick="startDankify()">DANKIFY</button>
+
+  <div class="log-label">Log</div>
+  <div class="log-box" id="logBox"></div>
+  <div class="done-banner" id="doneBanner">✅ &nbsp; Dankify complete</div>
+
+  <div class="result-wrap" id="resultWrap">
+    <div class="result-label">Result</div>
+    <video id="resultVideo" controls preload="auto"></video>
+  </div>
+
+  <script>
+    let evtSource = null;
+
+    const STORE_KEY = 'dankify_sel';
+
+    async function loadSessions() {
+      const res    = await fetch('/clips-list');
+      const data   = await res.json();
+      const sel    = document.getElementById('sessionSel');
+      const saved  = JSON.parse(localStorage.getItem(STORE_KEY) || '{}');
+      (data.sessions || []).forEach(s => {
+        const o = document.createElement('option');
+        o.value = s.title;
+        o.textContent = s.title;
+        if (s.title === saved.session) o.selected = true;
+        sel.appendChild(o);
+      });
+      if (saved.session) onSessionChange(saved.clip);
+    }
+
+    function onSessionChange(restoreClip) {
+      const session = document.getElementById('sessionSel').value;
+      const clipSel = document.getElementById('clipSel');
+      clipSel.innerHTML = '<option value="">— select clip —</option>';
+      document.getElementById('previewWrap').style.display = 'none';
+      if (!session) { _saveSelection(); return; }
+
+      fetch('/clips-list').then(r => r.json()).then(data => {
+        const s = (data.sessions || []).find(s => s.title === session);
+        if (!s) return;
+        s.clips.forEach(c => {
+          const fname = c.vertical.split('/').pop();
+          const o = document.createElement('option');
+          o.value = fname;
+          o.textContent = c.name;
+          if (fname === restoreClip) o.selected = true;
+          clipSel.appendChild(o);
+        });
+        if (restoreClip && clipSel.value === restoreClip) onClipChange();
+        _saveSelection();
+      });
+    }
+
+    function onClipChange() {
+      const session  = document.getElementById('sessionSel').value;
+      const filename = document.getElementById('clipSel').value;
+      const wrap     = document.getElementById('previewWrap');
+      const video    = document.getElementById('preview');
+      _saveSelection();
+      if (!session || !filename) { wrap.style.display = 'none'; return; }
+      video.src = `/clips-serve/${encodeURIComponent(session)}/vertical/${encodeURIComponent(filename)}`;
+      video.load();
+      wrap.style.display = 'block';
+    }
+
+    function _saveSelection() {
+      localStorage.setItem(STORE_KEY, JSON.stringify({
+        session: document.getElementById('sessionSel').value,
+        clip:    document.getElementById('clipSel').value,
+      }));
+    }
+
+    // Live timestamp display while scrubbing
+    document.addEventListener('DOMContentLoaded', () => {
+      document.getElementById('preview').addEventListener('timeupdate', () => {
+        const t = document.getElementById('preview').currentTime;
+        document.getElementById('tsDisplay').textContent = t.toFixed(3) + ' s';
+      });
+    });
+
+    function startDankify() {
+      const session   = document.getElementById('sessionSel').value;
+      const clip      = document.getElementById('clipSel').value;
+      const hookStart = parseFloat(document.getElementById('hookStart').value);
+
+      if (!session || !clip) { alert('Select a session and clip first.'); return; }
+      if (isNaN(hookStart)) { alert('Fill in hook start timestamp.'); return; }
+
+      document.getElementById('renderBtn').disabled = true;
+      document.getElementById('doneBanner').style.display = 'none';
+      document.getElementById('resultWrap').style.display = 'none';
+      document.getElementById('logBox').innerHTML = '';
+
+      fetch('/run-dankify', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ session, clip, hook_start: hookStart }),
+      });
+
+      if (evtSource) evtSource.close();
+      evtSource = new EventSource('/logs');
+      evtSource.onmessage = e => {
+        const msg = e.data;
+        if (msg === '__keepalive__') return;
+
+        if (msg.startsWith('__dankify_done__:')) {
+          const rel = msg.split(':').slice(1).join(':');
+          evtSource.close();
+          document.getElementById('renderBtn').disabled = false;
+          document.getElementById('doneBanner').style.display = 'block';
+          const video = document.getElementById('resultVideo');
+          video.src = `/clips-serve/${rel.split('/').map(encodeURIComponent).join('/')}?t=${Date.now()}`;
+          video.load();
+          document.getElementById('resultWrap').style.display = 'block';
+          return;
+        }
+        if (msg === '__dankify_failed__') {
+          evtSource.close();
+          document.getElementById('renderBtn').disabled = false;
+          return;
+        }
+
+        const logBox = document.getElementById('logBox');
+        const line   = document.createElement('span');
+        line.className = 'log-line' + (msg.includes('❌') || msg.includes('⚠️') ? ' error' : '');
+        line.textContent = msg;
+        logBox.appendChild(line);
+        logBox.appendChild(document.createElement('br'));
+        logBox.scrollTop = logBox.scrollHeight;
+      };
+    }
+
+    loadSessions();
+  </script>
+</body>
+</html>

@@ -1,7 +1,8 @@
 {
   "permissions": {
     "allow": [
-      "Bash(dir \"C:\\\\Users\\\\chebb\\\\PycharmProjects\")"
+      "Bash(dir \"C:\\\\Users\\\\chebb\\\\PycharmProjects\")",
+      "Bash(dir *)"
     ]
   }
 }
