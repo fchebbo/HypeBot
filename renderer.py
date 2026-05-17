@@ -148,7 +148,7 @@ def _draw_bar_text(draw, text, clip_w, bar_top, bar_bottom, max_size=120, min_si
         y += line_h + line_gap
 
 
-def render_with_text(clip_path, above_text, below_text, output_path, log_fn=print, hook=False, hook_offset=2.8, normalize_audio=False):
+def render_with_text(clip_path, above_text, below_text, output_path, log_fn=print, hook=False, hook_offset=2.8, normalize_audio=False, hook_transition='none', cut_end_sec=0.0):
     cap        = cv2.VideoCapture(clip_path)
     clip_w     = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     clip_h     = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
@@ -183,19 +183,45 @@ def render_with_text(clip_path, above_text, below_text, output_path, log_fn=prin
         log_fn("🔊  Audio normalization: on (compressor + hard limiter)")
 
     if hook:
-        hook_start = round(max(0.0, total_dur - hook_offset), 3)
-        log_fn(f"🪝  Hook: prepending last {hook_offset}s (from {hook_start:.2f}s)")
-        audio_tail = "[ha][fa]concat=n=2:v=0:a=1[ca_pre];[ca_pre]acompressor=threshold=0.063:ratio=15:attack=100:release=800,alimiter=limit=0.65:level=disabled[ca]" if normalize_audio \
-                else "[ha][fa]concat=n=2:v=0:a=1[ca]"
-        filter_complex = (
-            f"[0:v]trim=start={hook_start},setpts=PTS-STARTPTS[hv];"
-            f"[0:a]atrim=start={hook_start},asetpts=PTS-STARTPTS[ha];"
-            f"[0:v]setpts=PTS-STARTPTS[fv];"
-            f"[0:a]asetpts=PTS-STARTPTS[fa];"
-            f"[hv][fv]concat=n=2:v=1:a=0[cv];"
-            f"{audio_tail};"
-            f"[cv][1:v]overlay=0:0[outv]"
-        )
+        effective_end = round(max(0.1, total_dur - cut_end_sec), 3) if cut_end_sec > 0 else None
+        clip_end      = effective_end if effective_end else total_dur
+        hook_start    = round(max(0.0, clip_end - hook_offset), 3)
+        cut_note      = f" (cut last {cut_end_sec}s)" if effective_end else ""
+        log_fn(f"🪝  Hook: prepending last {hook_offset}s (from {hook_start:.2f}s){cut_note}")
+
+        hv_end = f":end={effective_end}" if effective_end else ""
+        hv_trim = f"[0:v]trim=start={hook_start}{hv_end},setpts=PTS-STARTPTS[hv]"
+        ha_trim = f"[0:a]atrim=start={hook_start}{hv_end},asetpts=PTS-STARTPTS[ha]"
+        fv_trim = (f"[0:v]trim=end={effective_end},setpts=PTS-STARTPTS[fv]" if effective_end
+                   else "[0:v]setpts=PTS-STARTPTS[fv]")
+        fa_trim = (f"[0:a]atrim=end={effective_end},asetpts=PTS-STARTPTS[fa]" if effective_end
+                   else "[0:a]asetpts=PTS-STARTPTS[fa]")
+
+        if hook_transition and hook_transition != 'none':
+            T = 0.5
+            xfade_offset = round(max(0.0, hook_offset - T), 3)
+            xfade_type   = _XFADE_MAP.get(hook_transition, hook_transition)
+            log_fn(f"✨  Transition: {hook_transition} ({T}s)")
+            audio_tail = (
+                f"[ha][fa]acrossfade=d={T}[ca_pre];[ca_pre]acompressor=threshold=0.063:ratio=15:attack=100:release=800,alimiter=limit=0.65:level=disabled[ca]"
+                if normalize_audio else
+                f"[ha][fa]acrossfade=d={T}[ca]"
+            )
+            filter_complex = (
+                f"{hv_trim};{ha_trim};{fv_trim};{fa_trim};"
+                f"[hv][fv]xfade=transition={xfade_type}:duration={T}:offset={xfade_offset}[cv];"
+                f"{audio_tail};"
+                f"[cv][1:v]overlay=0:0[outv]"
+            )
+        else:
+            audio_tail = "[ha][fa]concat=n=2:v=0:a=1[ca_pre];[ca_pre]acompressor=threshold=0.063:ratio=15:attack=100:release=800,alimiter=limit=0.65:level=disabled[ca]" if normalize_audio \
+                    else "[ha][fa]concat=n=2:v=0:a=1[ca]"
+            filter_complex = (
+                f"{hv_trim};{ha_trim};{fv_trim};{fa_trim};"
+                f"[hv][fv]concat=n=2:v=1:a=0[cv];"
+                f"{audio_tail};"
+                f"[cv][1:v]overlay=0:0[outv]"
+            )
         cmd = [
             'ffmpeg', '-y',
             '-i', clip_path,
@@ -210,6 +236,7 @@ def render_with_text(clip_path, above_text, below_text, output_path, log_fn=prin
         ]
     else:
         af_args = ['-af', 'acompressor=threshold=0.063:ratio=15:attack=100:release=800,alimiter=limit=0.65:level=disabled'] if normalize_audio else []
+        t_args  = ['-t', str(round(max(0.1, total_dur - cut_end_sec), 3))] if cut_end_sec > 0 else []
         cmd = [
             'ffmpeg', '-y',
             '-i', clip_path,
@@ -219,6 +246,7 @@ def render_with_text(clip_path, above_text, below_text, output_path, log_fn=prin
             *af_args,
             '-c:a', 'aac',
             '-preset', 'ultrafast',
+            *t_args,
             output_path,
         ]
 
@@ -605,14 +633,21 @@ def render_stitch(
 
 # ── Montage ──────────────────────────────────────────────────────────────────
 
-def _concat_segments(segments, transition, output_path, log_fn):
-    """Concatenate pre-extracted segment files with the given transition."""
-    n = len(segments)
-    inputs = []
-    for seg in segments:
-        inputs += ['-i', seg['path']]
+_XFADE_MAP = {'fade': 'fade', 'crossfade': 'dissolve', 'flash': 'fadewhite'}
 
-    if transition == 'cut':
+
+def _concat_segments(segments, output_path, log_fn):
+    """Concatenate pre-extracted segment files.
+    Each segment has {path, duration, transition} where transition (ignored for
+    segment 0) is the xfade type from the previous segment, or 'cut'."""
+    n = len(segments)
+    transitions = [s.get('transition', 'cut') for s in segments[1:]]
+    T = 0.3
+
+    if all(t == 'cut' for t in transitions):
+        inputs = []
+        for seg in segments:
+            inputs += ['-i', seg['path']]
         filter_str = (
             ''.join(f'[{i}:v][{i}:a]' for i in range(n)) +
             f'concat=n={n}:v=1:a=1[outv][outa]'
@@ -623,49 +658,96 @@ def _concat_segments(segments, transition, output_path, log_fn):
             '-c:v', 'libx264', '-c:a', 'aac', '-preset', 'ultrafast',
             output_path,
         ]
-    else:
-        xfade_map = {'fade': 'fade', 'crossfade': 'dissolve', 'flash': 'fadewhite'}
-        xfade_type = xfade_map.get(transition, 'fade')
-        T = 0.3  # transition duration in seconds
+        try:
+            r = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, timeout=FFMPEG_TIMEOUT)
+            if r.returncode != 0:
+                log_fn("❌  FFmpeg concat error: " + r.stderr.decode(errors='replace')[-400:])
+                return False
+            return True
+        except subprocess.TimeoutExpired:
+            log_fn("⚠️  FFmpeg concat timed out.")
+            return False
 
-        v_parts, a_parts = [], []
-        cumulative = 0.0
-        for k in range(n - 1):
-            src_v = f'[{k}:v]'  if k == 0 else f'[xv{k}]'
-            src_a = f'[{k}:a]'  if k == 0 else f'[xa{k}]'
-            out_v = f'[xv{k+1}]'
-            out_a = f'[xa{k+1}]'
-            cumulative += segments[k]['duration']
-            offset = round(max(0.0, cumulative - (k + 1) * T), 3)
-            v_parts.append(f'{src_v}[{k+1}:v]xfade=transition={xfade_type}:duration={T}:offset={offset}{out_v}')
-            a_parts.append(f'{src_a}[{k+1}:a]acrossfade=d={T}{out_a}')
+    # Sequential pair-by-pair merging — handles mixed and uniform xfade transitions
+    tmp_outs = []
+    txt_files = []
 
-        filter_str = ';'.join(v_parts + a_parts)
-        cmd = ['ffmpeg', '-y'] + inputs + [
-            '-filter_complex', filter_str,
-            '-map', f'[xv{n-1}]', '-map', f'[xa{n-1}]',
-            '-c:v', 'libx264', '-c:a', 'aac', '-preset', 'ultrafast',
-            output_path,
-        ]
+    def _tmp():
+        p = tempfile.NamedTemporaryFile(suffix='.mp4', delete=False).name
+        tmp_outs.append(p)
+        return p
 
     try:
-        r = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, timeout=FFMPEG_TIMEOUT)
-        if r.returncode != 0:
-            log_fn("❌  FFmpeg concat error: " + r.stderr.decode(errors='replace')[-400:])
-            return False
+        current_path = segments[0]['path']
+        current_dur  = segments[0]['duration']
+
+        for k in range(1, n):
+            seg      = segments[k]
+            tr       = seg.get('transition', 'cut')
+            out_path = output_path if k == n - 1 else _tmp()
+
+            if tr == 'cut':
+                concat_f = tempfile.NamedTemporaryFile(suffix='.txt', delete=False, mode='w', encoding='utf-8')
+                concat_f.write(f"file '{current_path}'\n")
+                concat_f.write(f"file '{seg['path']}'\n")
+                txt_files.append(concat_f.name)
+                concat_f.close()
+                cmd = [
+                    'ffmpeg', '-y',
+                    '-f', 'concat', '-safe', '0', '-i', concat_f.name,
+                    '-c:v', 'libx264', '-c:a', 'aac', '-preset', 'ultrafast',
+                    out_path,
+                ]
+                current_dur = current_dur + seg['duration']
+            else:
+                xfade_type = _XFADE_MAP.get(tr, tr)
+                offset = round(max(0.0, current_dur - T), 3)
+                cmd = [
+                    'ffmpeg', '-y',
+                    '-i', current_path, '-i', seg['path'],
+                    '-filter_complex',
+                    f"[0:v][1:v]xfade=transition={xfade_type}:duration={T}:offset={offset}[v];"
+                    f"[0:a][1:a]acrossfade=d={T}[a]",
+                    '-map', '[v]', '-map', '[a]',
+                    '-c:v', 'libx264', '-c:a', 'aac', '-preset', 'ultrafast',
+                    out_path,
+                ]
+                current_dur = current_dur + seg['duration'] - T
+
+            try:
+                r = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, timeout=FFMPEG_TIMEOUT)
+                if r.returncode != 0:
+                    log_fn(f"❌  FFmpeg merge [{k}] error: " + r.stderr.decode(errors='replace')[-400:])
+                    return False
+            except subprocess.TimeoutExpired:
+                log_fn(f"⚠️  FFmpeg merge [{k}] timed out.")
+                return False
+
+            current_path = out_path
+
         return True
-    except subprocess.TimeoutExpired:
-        log_fn("⚠️  FFmpeg concat timed out.")
-        return False
+    finally:
+        for f in tmp_outs + txt_files:
+            try:
+                os.unlink(f)
+            except Exception:
+                pass
 
 
-def render_montage(clips_info, top_text, transition, output_path, log_fn=print):
+def render_montage(clips_info, top_text, transition, output_path, log_fn=print, logo_path=None, black_top_bar=False):
     """
-    clips_info: list of {path, hook_offset, end_early}
-    transition: 'cut' | 'fade' | 'crossfade' | 'flash'
+    clips_info:    list of {path, hook_offset, end_early}
+    transition:    'cut' | 'fade' | 'crossfade' | 'flash'
+    logo_path:     optional image to fill the bottom bar
+    black_top_bar: if True, paint the top bar solid black
     """
     tmp_files = []
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
+
+    def _tmp():
+        p = tempfile.NamedTemporaryFile(suffix='.mp4', delete=False).name
+        tmp_files.append(p)
+        return p
 
     try:
         segments = []
@@ -684,8 +766,7 @@ def render_montage(clips_info, top_text, transition, output_path, log_fn=print):
                 log_fn(f"⚠️  Clip {i+1}: end_early >= hook_offset — skipping.")
                 continue
 
-            seg_path = tempfile.NamedTemporaryFile(suffix='.mp4', delete=False).name
-            tmp_files.append(seg_path)
+            seg_path = _tmp()
 
             log_fn(f"✂️  [{i+1}/{len(clips_info)}]  hook={hook_offset}s  early={end_early}s  → {seg_start:.2f}s–{seg_start+seg_dur:.2f}s  ({seg_dur:.2f}s)  {os.path.basename(info['path'])}")
             cmd = [
@@ -704,26 +785,75 @@ def render_montage(clips_info, top_text, transition, output_path, log_fn=print):
             except subprocess.TimeoutExpired:
                 log_fn(f"⚠️  Clip {i+1} extraction timed out.")
                 return False
-            segments.append({'path': seg_path, 'duration': seg_dur})
+            seg_transition = info.get('transition') or transition
+            segments.append({'path': seg_path, 'duration': seg_dur, 'transition': seg_transition})
 
         if len(segments) < 2:
             log_fn("❌  Need at least 2 valid clips for a montage.")
             return False
 
+        use_logo = bool(logo_path and os.path.exists(logo_path))
         use_text = bool(top_text and top_text.strip())
-        if use_text:
-            concat_tmp = tempfile.NamedTemporaryFile(suffix='.mp4', delete=False).name
-            tmp_files.append(concat_tmp)
-        else:
-            concat_tmp = output_path
+        use_bars = use_logo or black_top_bar
+
+        # Route: concat → [bars/logo] → [text] → output
+        concat_out = _tmp() if (use_bars or use_text) else output_path
 
         log_fn(f"🎬  Joining {len(segments)} clips with '{transition}' transition...")
-        if not _concat_segments(segments, transition, concat_tmp, log_fn):
+        if not _concat_segments(segments, concat_out, log_fn):
             return False
+
+        current = concat_out
+
+        if use_bars:
+            cap2 = cv2.VideoCapture(current)
+            vid_w = int(cap2.get(cv2.CAP_PROP_FRAME_WIDTH))
+            vid_h = int(cap2.get(cv2.CAP_PROP_FRAME_HEIGHT))
+            cap2.release()
+
+            top_bar_bottom, bottom_bar_top = _bar_regions(vid_w, vid_h)
+            bar_h = vid_h - bottom_bar_top
+
+            bars_out = _tmp() if use_text else output_path
+
+            if use_logo and black_top_bar:
+                log_fn(f"🖼️  Logo (bottom) + black top bar...")
+                filter_str = (
+                    f'[1:v]scale={vid_w}:{bar_h}:force_original_aspect_ratio=increase,'
+                    f'crop={vid_w}:{bar_h}[logo];'
+                    f'[0:v][logo]overlay=0:{bottom_bar_top}[withlogo];'
+                    f'[withlogo]drawbox=x=0:y=0:w=iw:h={top_bar_bottom}:color=black:t=fill[outv]'
+                )
+                cmd = ['ffmpeg', '-y', '-i', current, '-i', logo_path,
+                       '-filter_complex', filter_str,
+                       '-map', '[outv]', '-map', '0:a',
+                       '-c:v', 'libx264', '-c:a', 'aac', '-preset', 'ultrafast', bars_out]
+            elif use_logo:
+                log_fn(f"🖼️  Filling bottom bar with logo ({vid_w}x{bar_h})...")
+                filter_str = (
+                    f'[1:v]scale={vid_w}:{bar_h}:force_original_aspect_ratio=increase,'
+                    f'crop={vid_w}:{bar_h}[logo];'
+                    f'[0:v][logo]overlay=0:{bottom_bar_top}[outv]'
+                )
+                cmd = ['ffmpeg', '-y', '-i', current, '-i', logo_path,
+                       '-filter_complex', filter_str,
+                       '-map', '[outv]', '-map', '0:a',
+                       '-c:v', 'libx264', '-c:a', 'aac', '-preset', 'ultrafast', bars_out]
+            else:
+                log_fn(f"⬛  Blacking out top bar...")
+                cmd = ['ffmpeg', '-y', '-i', current,
+                       '-vf', f'drawbox=x=0:y=0:w=iw:h={top_bar_bottom}:color=black:t=fill',
+                       '-c:v', 'libx264', '-c:a', 'aac', '-preset', 'ultrafast', bars_out]
+
+            r = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, timeout=FFMPEG_TIMEOUT)
+            if r.returncode != 0:
+                log_fn("❌  Bar overlay failed: " + r.stderr.decode(errors='replace')[-400:])
+                return False
+            current = bars_out
 
         if use_text:
             log_fn("🎨  Burning top text...")
-            if not render_with_text(concat_tmp, top_text, None, output_path, log_fn=log_fn):
+            if not render_with_text(current, top_text, None, output_path, log_fn=log_fn):
                 return False
 
         log_fn("✅  Montage complete.")
@@ -745,9 +875,8 @@ def render_montage(clips_info, top_text, transition, output_path, log_fn=print):
 # Each replay pass: (top_bar_text, xfade_transition_into_this_segment)
 _DANKIFY_EFFECTS = [
     # (top_text, xfade_transition_into_this_segment)
-    ("HE",       "dissolve"),
-    ("HIT",      "wipeleft"),
-    ("THAT?!!?", "fadewhite"),
+    ("HE LANDED",    "dissolve"),
+    ("THAT?!?!",  "dissolve"),
 ]
 
 _FFMPEG_FONT = _IMPACT.replace('\\', '/').replace('C:/', 'C\\:/')

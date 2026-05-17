@@ -350,6 +350,75 @@ def cut_clips(video_path, ko_events, output_dir="clips", log_fn=print):
     log_fn(f"\n✅  All clips saved to '{output_dir}/'")
 
 
+def cut_manual_clip(video_path, start_sec, end_sec, output_dir, clip_name, log_fn=print):
+    """Cut a clip with explicit start/end timestamps — vertical (9:16) + original (16:9)."""
+    cap = cv2.VideoCapture(video_path)
+    src_width  = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    src_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    cap.release()
+
+    if not src_width or not src_height:
+        log_fn("❌  Could not read VOD dimensions.")
+        return False
+
+    duration = round(end_sec - start_sec, 3)
+
+    out_height = src_height if src_height % 2 == 0 else src_height - 1
+    out_width  = int(src_height * 9 / 16)
+    out_width  = out_width if out_width % 2 == 0 else out_width - 1
+    fg_width   = out_width
+    fg_height  = int(out_width * src_height / src_width)
+    fg_height  = fg_height if fg_height % 2 == 0 else fg_height - 1
+    fg_y       = (out_height - fg_height) // 2
+
+    blur_filter = (
+        f"[0:v]scale={out_width}:{out_height}:force_original_aspect_ratio=increase,"
+        f"crop={out_width}:{out_height},"
+        f"boxblur={BLUR_STRENGTH}:{BLUR_STRENGTH}[bg];"
+        f"[0:v]scale={fg_width}:{fg_height}[fg];"
+        f"[bg][fg]overlay=0:{fg_y}"
+    )
+
+    vert_dir = os.path.join(output_dir, "vertical")
+    orig_dir = os.path.join(output_dir, "original")
+    os.makedirs(vert_dir, exist_ok=True)
+    os.makedirs(orig_dir, exist_ok=True)
+
+    vert_path = os.path.join(vert_dir, f"{clip_name}_vertical.mp4")
+    orig_path = os.path.join(orig_dir, f"{clip_name}_original.mp4")
+
+    log_fn(f"✂️  Manual clip: {_fmt_ts(start_sec)} → {_fmt_ts(end_sec)} ({duration:.1f}s)")
+    log_fn(f"🎬  Rendering vertical (9:16)...")
+    v_ok = run_ffmpeg([
+        "ffmpeg", "-y",
+        "-ss", str(start_sec), "-i", video_path,
+        "-t", str(duration),
+        "-filter_complex", blur_filter,
+        "-c:v", "libx264", "-c:a", "aac", "-preset", "ultrafast",
+        vert_path,
+    ], f"{clip_name}_vertical", log_fn)
+    if v_ok:
+        log_fn("✅  Vertical done.")
+        thumb_path = os.path.join(vert_dir, f"{clip_name}_thumb.jpg")
+        run_ffmpeg([
+            "ffmpeg", "-y", "-ss", "5", "-i", vert_path,
+            "-vframes", "1", "-q:v", "4", thumb_path,
+        ], f"{clip_name}_thumb", log_fn)
+
+    log_fn(f"🎬  Rendering original (16:9)...")
+    o_ok = run_ffmpeg([
+        "ffmpeg", "-y",
+        "-ss", str(start_sec), "-i", video_path,
+        "-t", str(duration),
+        "-c:v", "libx264", "-c:a", "aac", "-preset", "ultrafast",
+        orig_path,
+    ], f"{clip_name}_original", log_fn)
+    if o_ok:
+        log_fn("✅  Original done.")
+
+    return v_ok or o_ok
+
+
 def cut_extended_vertical(video_path, ko_timestamp, extend_sec, output_path, log_fn=print):
     """Cut a single extended vertical clip from the source VOD for the Extend feature.
 

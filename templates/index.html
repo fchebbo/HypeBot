@@ -160,6 +160,8 @@
     }
     .url-input::placeholder { color: var(--muted); }
     .url-input:focus { border-color: var(--red); }
+    select.url-input { appearance: auto; cursor: pointer; }
+    select.url-input option { background: var(--bg); }
 
     .go-btn {
       background: var(--red);
@@ -814,6 +816,17 @@
       <div class="empty-state">No clips found.</div>
     </div>
     <div class="clips-grid" id="finalsGrid" style="display:none"></div>
+
+    <div id="manualCutSection" style="display:none; margin-top:28px; padding-top:20px; border-top:1px solid var(--border);">
+      <div class="log-label" style="margin-bottom:10px;">Add clip manually</div>
+      <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:flex-end;">
+        <input id="manualStart" class="url-input" type="text" placeholder="0:00:00" style="width:100px; font-family:var(--mono);"/>
+        <input id="manualEnd"   class="url-input" type="text" placeholder="0:00:00" style="width:100px; font-family:var(--mono);"/>
+        <input id="manualName"  class="url-input" type="text"   placeholder="Name (optional)" style="flex:1; min-width:160px;"/>
+        <button id="manualCutBtn" class="go-btn" onclick="startManualCut()">CUT</button>
+      </div>
+      <div id="manualCutStatus" style="display:none; font-size:11px; margin-top:8px; color:var(--green); letter-spacing:0.05em;"></div>
+    </div>
   </section>
 
 </div>
@@ -821,6 +834,15 @@
 <script>
   let eventSource = null;
   let currentMode = 'url';
+
+  function parseTs(s) {
+    if (!s || !s.trim()) return null;
+    const parts = s.trim().split(':').map(Number);
+    if (parts.some(isNaN)) return null;
+    if (parts.length === 3) return parts[0] * 3600 + parts[1] * 60 + parts[2];
+    if (parts.length === 2) return parts[0] * 60 + parts[1];
+    return parseFloat(s);
+  }
   let allSessions = [];
   let currentSessionIdx = 0;
   let currentFilter = 'all';
@@ -967,17 +989,8 @@
     };
 
     const body = isFile ? { path: value } : { url: value };
-    const scanStart = document.getElementById('scanStart').value.trim();
-    const scanEnd   = document.getElementById('scanEnd').value.trim();
-    const parseTs = s => {
-      if (!s) return null;
-      const parts = s.split(':').map(Number);
-      if (parts.length === 3) return parts[0] * 3600 + parts[1] * 60 + parts[2];
-      if (parts.length === 2) return parts[0] * 60 + parts[1];
-      return parseFloat(s);
-    };
-    const startSec = parseTs(scanStart);
-    const endSec   = parseTs(scanEnd);
+    const startSec = parseTs(document.getElementById('scanStart').value);
+    const endSec   = parseTs(document.getElementById('scanEnd').value);
     if (startSec !== null) body.start_sec = startSec;
     if (endSec   !== null) body.end_sec   = endSec;
     fetch('/run', {
@@ -1064,9 +1077,12 @@
     const grid       = document.getElementById('clipsGrid');
     const finalsGrid = document.getElementById('finalsGrid');
     const metaBar    = document.getElementById('sessionMeta');
+    const manualSec  = document.getElementById('manualCutSection');
     grid.innerHTML       = '';
     finalsGrid.innerHTML = '';
     finalsGrid.style.display = 'none';
+    document.getElementById('manualCutStatus').style.display = 'none';
+    manualSec.style.display = session ? 'block' : 'none';
 
     const meta = session && session.meta;
     if (meta && (meta.venue || meta.source)) {
@@ -1276,13 +1292,33 @@
     hookOffsetInput.step = '0.1';
     hookOffsetInput.disabled = true;
 
+    const transitionSelect = document.createElement('select');
+    transitionSelect.className = 'hook-offset-input';
+    transitionSelect.style.cssText = 'width:auto; cursor:pointer; appearance:auto;';
+    transitionSelect.disabled = true;
+    [
+      ['none',      'No transition'],
+      ['radial',    'Clock Wipe'],
+      ['fadewhite', 'White Flash'],
+      ['crossfade', 'Crossfade'],
+      ['zoomin',    'Zoom + Fade'],
+      ['pixelize',  'Pixelize'],
+    ].forEach(([val, label]) => {
+      const opt = document.createElement('option');
+      opt.value = val;
+      opt.textContent = label;
+      transitionSelect.appendChild(opt);
+    });
+
     hookCheck.addEventListener('change', () => {
       hookOffsetInput.disabled = !hookCheck.checked;
+      transitionSelect.disabled = !hookCheck.checked;
     });
 
     hookRow.appendChild(hookCheck);
     hookRow.appendChild(hookLabel);
     hookRow.appendChild(hookOffsetInput);
+    hookRow.appendChild(transitionSelect);
 
     const extendRow = document.createElement('div');
     extendRow.className = 'extend-row';
@@ -1306,6 +1342,29 @@
     extendRow.appendChild(extendLabel);
     extendRow.appendChild(extendInput);
     extendRow.appendChild(extendUnit);
+
+    const cutRow = document.createElement('div');
+    cutRow.className = 'extend-row';
+
+    const cutLabel = document.createElement('label');
+    cutLabel.textContent = 'Cut end';
+
+    const cutInput = document.createElement('input');
+    cutInput.className = 'hook-offset-input';
+    cutInput.type = 'number';
+    cutInput.value = '0';
+    cutInput.min = '0';
+    cutInput.max = '10.0';
+    cutInput.step = '0.5';
+    cutInput.title = 'Trim this many seconds from the end of the clip (applies to hook + full clip)';
+
+    const cutUnit = document.createElement('span');
+    cutUnit.textContent = 's';
+    cutUnit.style.cssText = 'font-size:11px;color:var(--muted);';
+
+    cutRow.appendChild(cutLabel);
+    cutRow.appendChild(cutInput);
+    cutRow.appendChild(cutUnit);
 
     const normRow = document.createElement('div');
     normRow.className = 'hook-row';
@@ -1349,7 +1408,9 @@
             below:       belowInput.value.trim(),
             hook:            hookCheck.checked,
             hook_offset:     parseFloat(hookOffsetInput.value) || 2.8,
+            hook_transition: transitionSelect.value,
             extend_sec:      parseFloat(extendInput.value) || 0,
+            cut_end_sec:     parseFloat(cutInput.value) || 0,
             normalize_audio: normCheck.checked,
           }),
         });
@@ -1380,6 +1441,7 @@
 
     textPanel.appendChild(hookRow);
     textPanel.appendChild(extendRow);
+    textPanel.appendChild(cutRow);
     textPanel.appendChild(normRow);
     textPanel.appendChild(aboveInput);
     textPanel.appendChild(belowInput);
@@ -1515,6 +1577,68 @@
       alert('Archive request failed.');
     }
     btn.disabled = false;
+  }
+
+  // ── manual cut ───────────────────────────────────────────────
+  function startManualCut() {
+    const session = allSessions[currentSessionIdx]?.title;
+    const start   = parseTs(document.getElementById('manualStart').value);
+    const end     = parseTs(document.getElementById('manualEnd').value);
+    const name    = document.getElementById('manualName').value.trim();
+
+    if (!session)              { alert('No session selected.');                      return; }
+    if (start === null)        { alert('Enter a valid start time (e.g. 1:23:45).');  return; }
+    if (end   === null)        { alert('Enter a valid end time (e.g. 1:25:10).');    return; }
+    if (end <= start)          { alert('End must be after start.');                  return; }
+
+    const btn    = document.getElementById('manualCutBtn');
+    const status = document.getElementById('manualCutStatus');
+
+    btn.disabled = true;
+    btn.textContent = 'CUTTING...';
+    status.textContent = '';
+    status.style.display = 'none';
+
+    if (eventSource) eventSource.close();
+    eventSource = new EventSource('/logs');
+    eventSource.onmessage = (e) => {
+      const msg = e.data;
+      if (msg === '__keepalive__') return;
+
+      if (msg.startsWith('__manual_clip_done__:')) {
+        const doneSession = msg.split(':').slice(1).join(':');
+        eventSource.close();
+        btn.disabled = false;
+        btn.textContent = 'CUT';
+        status.textContent = '✅  Clip added.';
+        status.style.color = 'var(--green)';
+        status.style.display = 'block';
+        document.getElementById('manualStart').value = '';
+        document.getElementById('manualEnd').value   = '';
+        document.getElementById('manualName').value  = '';
+        loadClips(doneSession);
+        return;
+      }
+      if (msg === '__manual_clip_failed__') {
+        eventSource.close();
+        btn.disabled = false;
+        btn.textContent = 'CUT';
+        status.textContent = '❌  Cut failed — check that this session has a VOD.';
+        status.style.color = 'var(--red)';
+        status.style.display = 'block';
+        return;
+      }
+
+      status.textContent = msg;
+      status.style.color = 'var(--muted)';
+      status.style.display = 'block';
+    };
+
+    fetch('/manual-clip', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ session, start_sec: start, end_sec: end, clip_name: name }),
+    });
   }
 
   // ── key shortcuts ─────────────────────────────────────────────

@@ -95,17 +95,36 @@
     <div class="section-title">Options</div>
     <div class="options-row">
       <div class="field">
-        <label>Transition</label>
-        <select id="transitionSel">
+        <label>Transition (sets all clips)</label>
+        <select id="transitionSel" onchange="onGlobalTransitionChange()">
           <option value="cut">Cut (instant)</option>
           <option value="flash" selected>Flash to White</option>
           <option value="fade">Fade to Black</option>
           <option value="crossfade">Crossfade (dissolve)</option>
+          <option value="radial">Clock Wipe</option>
+          <option value="zoomin">Zoom + Fade</option>
+          <option value="pixelize">Pixelize</option>
         </select>
       </div>
       <div class="field">
         <label>Top text</label>
         <input id="topText" type="text" placeholder="e.g. LITTLE MAC WINS A LOCAL">
+      </div>
+    </div>
+    <div class="row" style="margin-top:12px; align-items:center;">
+      <label style="display:flex;align-items:center;gap:8px;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px;cursor:pointer;">
+        <input type="checkbox" id="blackTopBar" style="accent-color:var(--accent);width:14px;height:14px;">
+        Black top bar
+      </label>
+    </div>
+    <div class="row" style="margin-top:12px;">
+      <div class="field">
+        <label>Branding logo (bottom bar)</label>
+        <div style="display:flex; gap:6px;">
+          <input id="logoPath" type="text" placeholder="No logo — click Browse to select a PNG" readonly style="flex:1; cursor:default;">
+          <button onclick="browseLogo()" style="background:var(--bg);border:1px solid var(--border);color:var(--fg);padding:0 12px;cursor:pointer;border-radius:2px;white-space:nowrap;font-size:12px;">Browse</button>
+          <button onclick="clearLogo()" style="background:var(--bg);border:1px solid var(--border);color:var(--muted);padding:0 10px;cursor:pointer;border-radius:2px;font-size:12px;">✕</button>
+        </div>
       </div>
     </div>
   </div>
@@ -124,6 +143,27 @@
   <script>
     let evtSource   = null;
     let sessionClips = [];
+
+    const TRANSITION_OPTS = [
+      ['cut',      'Cut (instant)'],
+      ['flash',    'Flash to White'],
+      ['fade',     'Fade to Black'],
+      ['crossfade','Crossfade (dissolve)'],
+      ['radial',   'Clock Wipe'],
+      ['zoomin',   'Zoom + Fade'],
+      ['pixelize', 'Pixelize'],
+    ];
+
+    function transitionOptsHtml(selected) {
+      return TRANSITION_OPTS.map(([v, l]) =>
+        `<option value="${v}"${v === selected ? ' selected' : ''}>${l}</option>`
+      ).join('');
+    }
+
+    function onGlobalTransitionChange() {
+      const val = document.getElementById('transitionSel').value;
+      document.querySelectorAll('.slot .tr-sel').forEach(sel => { sel.value = val; });
+    }
 
     // ── init ──────────────────────────────────────────────────────────────────
 
@@ -180,8 +220,18 @@
       slot.className = 'slot';
       slot.dataset.idx = idx;
 
+      const globalTr = document.getElementById('transitionSel')?.value || 'flash';
+      const trRow = idx > 1 ? `
+        <div class="row">
+          <div class="field narrow">
+            <label>Transition in</label>
+            <select class="tr-sel">${transitionOptsHtml(globalTr)}</select>
+          </div>
+        </div>` : '';
+
       slot.innerHTML = `
         <div class="slot-header">Clip ${idx}</div>
+        ${trRow}
         <div class="row">
           <div class="field">
             <label>Clip</label>
@@ -248,10 +298,12 @@
       slots.forEach(slot => {
         const clip = slot.querySelector('.clip-sel').value;
         if (!clip) { valid = false; return; }
+        const trSel = slot.querySelector('.tr-sel');
         clips.push({
           clip:        clip,
           hook_offset: parseFloat(slot.querySelector('.hook-in').value)  || 5,
           end_early:   parseFloat(slot.querySelector('.early-in').value) || 0,
+          transition:  trSel ? trSel.value : document.getElementById('transitionSel').value,
         });
       });
 
@@ -272,6 +324,8 @@
           session,
           top_text:   document.getElementById('topText').value.trim(),
           transition: document.getElementById('transitionSel').value,
+          logo_path:     document.getElementById('logoPath').value.trim(),
+          black_top_bar: document.getElementById('blackTopBar').checked,
           clips,
         }),
       });
@@ -308,6 +362,16 @@
         logBox.appendChild(document.createElement('br'));
         logBox.scrollTop = logBox.scrollHeight;
       };
+    }
+
+    async function browseLogo() {
+      const res  = await fetch('/browse-image');
+      const data = await res.json();
+      if (data.path) document.getElementById('logoPath').value = data.path;
+    }
+
+    function clearLogo() {
+      document.getElementById('logoPath').value = '';
     }
 
     loadSessions();

@@ -9,7 +9,7 @@ import threading
 import queue
 import subprocess
 import yt_dlp
-from detector import detect_ko_events, cut_clips, cut_extended_vertical
+from detector import detect_ko_events, cut_clips, cut_extended_vertical, cut_manual_clip
 from renderer import render_with_text, render_stitch, render_replay, render_montage, render_dankify
 
 app = Flask(__name__)
@@ -57,13 +57,32 @@ def browse():
         return jsonify({'path': None, 'error': str(e)})
 
 
+@app.route("/browse-image")
+def browse_image():
+    ps = (
+        '[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; '
+        'Add-Type -AssemblyName System.Windows.Forms; '
+        '$d = New-Object System.Windows.Forms.OpenFileDialog; '
+        '$d.Filter = "Image Files|*.png;*.jpg;*.jpeg;*.webp;*.bmp|All Files|*.*"; '
+        '$d.Title = "Select Logo / Branding Image"; '
+        'if ($d.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { $d.FileName }'
+    )
+    try:
+        r = subprocess.run(['powershell', '-STA', '-Command', ps],
+                           capture_output=True, timeout=60, encoding='utf-8')
+        path = r.stdout.strip()
+        return jsonify({'path': path or None})
+    except Exception as e:
+        return jsonify({'path': None, 'error': str(e)})
+
+
 @app.route("/clips-list")
 def clips_list():
     root = os.path.abspath('clips')
     sessions = []
     if not os.path.exists(root):
         return jsonify({'sessions': []})
-    for name in sorted(os.listdir(root), reverse=True):
+    for name in sorted(os.listdir(root)):
         session_path = os.path.join(root, name)
         if not os.path.isdir(session_path):
             continue
@@ -220,6 +239,8 @@ def render_text_route():
     below       = data.get("below", "").strip()
     hook            = bool(data.get("hook", False))
     hook_offset     = float(data.get("hook_offset", 2.8))
+    hook_transition = data.get("hook_transition", "none").strip()
+    cut_end_sec     = float(data.get("cut_end_sec", 0.0))
     extend_sec      = float(data.get("extend_sec", 0.0))
     normalize_audio = bool(data.get("normalize_audio", False))
 
@@ -270,7 +291,7 @@ def render_text_route():
             capture("⚠️  VOD not found for extend — rendering standard 13s clip.")
 
     try:
-        ok = render_with_text(render_source, above, below, output_path, log_fn=capture, hook=hook, hook_offset=hook_offset, normalize_audio=normalize_audio)
+        ok = render_with_text(render_source, above, below, output_path, log_fn=capture, hook=hook, hook_offset=hook_offset, normalize_audio=normalize_audio, hook_transition=hook_transition, cut_end_sec=cut_end_sec)
     finally:
         if tmp_extended and os.path.exists(tmp_extended):
             try:
@@ -436,7 +457,9 @@ def run_montage():
     session    = data.get("session", "").strip()
     top_text   = data.get("top_text", "").strip()
     transition = data.get("transition", "cut").strip()
-    clips_data = data.get("clips", [])
+    logo_path     = data.get("logo_path", "").strip() or None
+    black_top_bar = bool(data.get("black_top_bar", False))
+    clips_data    = data.get("clips", [])
 
     if not session or len(clips_data) < 2:
         return jsonify({"error": "session and at least 2 clips are required"}), 400
@@ -452,7 +475,8 @@ def run_montage():
         clip_path = os.path.join(clips_root, session, "vertical", clip_rel)
         if not os.path.exists(clip_path):
             return jsonify({"error": f"Clip not found: {clip_rel}"}), 404
-        clips_info.append({"path": clip_path, "hook_offset": hook_offset, "end_early": end_early})
+        clip_transition = c.get("transition", "").strip() or transition
+        clips_info.append({"path": clip_path, "hook_offset": hook_offset, "end_early": end_early, "transition": clip_transition})
 
     out_name    = f"montage_{int(time.time())}.mp4"
     output_dir  = os.path.join(clips_root, session, "montage")
@@ -460,7 +484,7 @@ def run_montage():
     output_rel  = f"{session}/montage/{out_name}"
 
     def do_montage():
-        ok = render_montage(clips_info, top_text, transition, output_path, log_fn=log)
+        ok = render_montage(clips_info, top_text, transition, output_path, log_fn=log, logo_path=logo_path, black_top_bar=black_top_bar)
         if ok:
             log(f"__montage_done__:{output_rel}")
         else:
@@ -468,6 +492,53 @@ def run_montage():
 
     threading.Thread(target=do_montage, daemon=True).start()
     return jsonify({"status": "started"})
+
+
+@app.route("/manual-clip", methods=["POST"])
+def manual_clip():
+    data      = request.get_json()
+    session   = data.get("session", "").strip()
+    start_sec = float(data.get("start_sec", 0))
+    end_sec   = float(data.get("end_sec", 0))
+    clip_name = data.get("clip_name", "").strip()
+
+    if not session:
+        return jsonify({"error": "session is required"}), 400
+    if end_sec <= start_sec:
+        return jsonify({"error": "end must be after start"}), 400
+
+    clips_root  = os.path.abspath("clips")
+    session_dir = os.path.join(clips_root, session)
+    meta_path   = os.path.join(session_dir, "meta.json")
+
+    if not os.path.exists(meta_path):
+        return jsonify({"error": "Session not found (no meta.json)"}), 404
+
+    with open(meta_path) as f:
+        meta = json.load(f)
+    vod_path = meta.get("vod_path")
+    if not vod_path or not os.path.exists(vod_path):
+        return jsonify({"error": f"VOD not found: {vod_path}"}), 404
+
+    if not clip_name:
+        vert_dir = os.path.join(session_dir, "vertical")
+        next_num = 1
+        if os.path.exists(vert_dir):
+            existing = [f for f in os.listdir(vert_dir) if f.endswith("_vertical.mp4")]
+            next_num = len(existing) + 1
+        mins = int(start_sec // 60)
+        secs = int(start_sec % 60)
+        clip_name = f"clip_{next_num}_{mins}m{secs}s"
+
+    def do_cut():
+        ok = cut_manual_clip(vod_path, start_sec, end_sec, session_dir, clip_name, log_fn=log)
+        if ok:
+            log(f"__manual_clip_done__:{session}")
+        else:
+            log("__manual_clip_failed__")
+
+    threading.Thread(target=do_cut, daemon=True).start()
+    return jsonify({"status": "started", "clip_name": clip_name})
 
 
 @app.route("/clips-serve/<path:filename>")
