@@ -1086,9 +1086,11 @@
 
     const meta = session && session.meta;
     if (meta && (meta.venue || meta.source)) {
+      const CTA = 'Got a local with highlight-worthy sets? Send me the full event VOD and I\'ll find and clip the best moments — pre-made clips welcome too. New videos every day.';
       const lines = [];
       if (meta.venue)  lines.push(`Venue: ${meta.venue}`);
-      if (meta.source) lines.push(`Source: ${meta.source}`);
+      if (meta.source) lines.push('', `Source: ${meta.source}`);
+      lines.push('', CTA);
       const text = lines.join('\n');
       metaBar.innerHTML = `<textarea readonly onclick="this.select()" title="Click to select all">${text}</textarea>`;
       metaBar.style.display = 'block';
