@@ -245,18 +245,32 @@ Each clip gets its own card showing the vertical 9:16 preview. You can:
 
 1. Click **ADD TEXT** on any clip
 2. Type your hook line in the **ABOVE** or **BELOW** field (or both)
-3. Click **RENDER** — HypeBot burns the text onto the clip and saves it as a final
-4. Finals appear at the bottom of the page under their own section, ready to download and upload
+3. Optionally enable **KO Hook** to stitch a short replay of the finish before the full clip, with a transition effect between them
+4. Use **Extend clip** or **Cut end** to trim the clip length
+5. Click **RENDER** — HypeBot burns the text onto the clip and saves it as a final
+6. Finals appear at the bottom of the page under their own section, ready to download and upload
 
-### Archive a session
+### Add clips manually
 
-When you're done with a VOD and don't need it cluttering the review screen:
+If a VOD had no detected KO events, or you want to cut a specific moment that wasn't caught automatically:
 
-1. Select the session tab
-2. Click **ARCHIVE** in the top-right of the review section
-3. The session moves to `clips/archived/` and disappears from the list
+1. Select the session from the dropdown
+2. Scroll to **Add clip manually** at the bottom of the review panel
+3. Enter a **Start** and **End** timestamp (format: `1:23:45`)
+4. Click **CUT** — HypeBot cuts both a vertical and original version as normal
 
-To restore an archived session, click the **ARCHIVED (N)** button that appears above the review section and hit **RESTORE** next to the one you want back.
+> If the VOD had 0 detected clips it will still appear in the session list as long as it was processed by HypeBot.
+
+### Create a montage
+
+The montage tool assembles multiple clips into a single Short with transitions between them.
+
+1. Go to `http://localhost:5000/montage`
+2. Select a session and add clips to the timeline using **+ ADD CLIP**
+3. Set a global transition or override it per clip
+4. Add optional top text and a logo overlay
+5. Click **RENDER MONTAGE** — when done, the result plays inline
+6. Saved to `clips/[session]/montage/`
 
 ### Create a slow-motion replay
 
@@ -264,12 +278,12 @@ The replay tool takes a single clip and produces a "Did You Catch It?" Short —
 
 1. Go to `http://localhost:5000/replay`
 2. Select the session and clip from the dropdowns — a preview player appears so you can watch first
-3. Optionally check **Use KO hook only** to trim the clip to just the last few seconds (good for longer clips where only the finish matters)
+3. Optionally check **Use KO hook only** to trim the clip to just the last few seconds
 4. Set **Moment start** — how many seconds into the clip the key moment happens (this is where the slowmo begins)
 5. Tune **Slowmo duration**, **Speed**, **Zoom**, and **Crossfade** to taste
 6. Set the **top text** shown during the first play (e.g. "DID YOU CATCH IT?") and optionally different text for the replay
 7. Click **RENDER REPLAY** — when done, the result plays inline
-8. The clip is saved to `clips/[session]/slo-mo-moment/`
+8. Saved to `clips/[session]/replay/`
 
 ### Stitch two clips together
 
@@ -277,9 +291,36 @@ The stitch tool combines the KO hook from two clips into a single Short — grea
 
 1. Go to `http://localhost:5000/stitch`
 2. Select the session both clips belong to
-3. Pick **Clip 1** and **Clip 2** from the dropdowns — a preview player appears for each so you can watch before committing
+3. Pick **Clip 1** and **Clip 2** from the dropdowns — a preview player appears for each
 4. Set the **hook offset** for each clip (how many seconds from the end to include)
 5. Customize the **transition text** (defaults to "Later...")
 6. Add **above/below text** for each clip independently
-7. Click **RENDER STITCH** — when done, the result plays inline for review
-8. The combined clip is saved to `clips/[session]/combined/`
+7. Click **RENDER STITCH** — when done, the result plays inline
+8. Saved to `clips/[session]/stitch/`
+
+### Dankify a clip
+
+Dankify applies audio compression and processing to a clip for a punchier, more impactful sound.
+
+1. Go to `http://localhost:5000/dankify`
+2. Select the session and clip, set the hook start point
+3. Click **DANKIFY** — saved to `clips/[session]/dankify/`
+
+### Archive your library
+
+The archive is a permanent, curated export of your best clips — the source of truth for upload-ready content. Run it monthly to consolidate everything worth keeping before clearing out `clips/` and `downloads/`.
+
+**What gets archived:**
+- Vertical clips that are flagged or have a rendered final
+- Their 16:9 originals
+- All finals, montages, replays, dankify, and stitch outputs
+
+**How to run it:**
+
+1. Go to `http://localhost:5000/archive`
+2. Click **RUN ARCHIVE** — a preview shows exactly what will be copied and the estimated size
+3. Confirm — files are copied (never moved) to `archive/YYYY-MM/`
+4. Browse the result: clips are grouped by venue, thumbnails load as you scroll
+5. Once you're satisfied, manually delete `clips/` and `downloads/` to reclaim disk space
+
+The archive page supports lazy-loaded thumbnails, click-to-play, collapsible venue sections, and one-click copy of the VOD source URL.

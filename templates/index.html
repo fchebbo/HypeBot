@@ -649,61 +649,6 @@
       grid-column: 1 / -1;
     }
 
-    /* ── archived section ── */
-    .archived-section {
-      width: 100%;
-      max-width: 960px;
-    }
-    .archived-toggle {
-      background: none;
-      border: 1px solid var(--border);
-      border-radius: 2px;
-      color: var(--muted);
-      cursor: pointer;
-      font-family: var(--display);
-      font-size: 14px;
-      letter-spacing: 0.1em;
-      padding: 6px 16px;
-      transition: color 0.15s, border-color 0.15s;
-    }
-    .archived-toggle:hover { color: var(--text); border-color: var(--muted); }
-    .archived-toggle.has-items { color: var(--text); }
-
-    .archived-list {
-      display: none;
-      margin-top: 12px;
-      border: 1px solid var(--border);
-      border-radius: 2px;
-      overflow: hidden;
-    }
-    .archived-list.open { display: block; }
-
-    .archived-row {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      padding: 10px 16px;
-      border-bottom: 1px solid var(--border);
-      font-size: 12px;
-      letter-spacing: 0.04em;
-    }
-    .archived-row:last-child { border-bottom: none; }
-    .archived-row:hover { background: var(--surface); }
-
-    .restore-btn {
-      background: none;
-      border: 1px solid var(--border);
-      border-radius: 2px;
-      color: var(--muted);
-      cursor: pointer;
-      font-family: var(--display);
-      font-size: 11px;
-      letter-spacing: 0.08em;
-      padding: 3px 10px;
-      transition: all 0.15s;
-      flex-shrink: 0;
-    }
-    .restore-btn:hover { color: var(--text); border-color: var(--muted); }
 
     .final-badge {
       position: absolute;
@@ -731,6 +676,7 @@
       <a class="nav-tool" href="/stitch">Stitch</a>
       <a class="nav-tool" href="/montage">Montage</a>
       <a class="nav-tool" href="/dankify">Dankify</a>
+      <a class="nav-tool" href="/archive">Archive</a>
     </nav>
   </header>
 
@@ -792,18 +738,12 @@
 
   <button class="review-trigger" onclick="loadClips(null)">Review previous clips ↓</button>
 
-  <div class="archived-section" id="archivedSection" style="display:none">
-    <button class="archived-toggle" id="archivedToggle" onclick="toggleArchived()">ARCHIVED (0)</button>
-    <div class="archived-list" id="archivedList"></div>
-  </div>
-
   <section class="review" id="reviewSection">
     <div class="review-top">
       <span class="section-heading">CLIPS</span>
       <div class="session-tabs" id="sessionTabs"></div>
       <button class="icon-btn" onclick="loadClips(null)" title="Refresh">↻</button>
       <button class="icon-btn" id="thumbsBtn" onclick="generateThumbs()" title="Generate thumbnails for this session" style="font-size:14px;letter-spacing:0.06em;font-family:var(--display)">THUMBS</button>
-      <button class="icon-btn" id="archiveBtn" onclick="archiveSession()" title="Archive current session" style="font-size:14px;letter-spacing:0.06em;font-family:var(--display)">ARCHIVE</button>
     </div>
     <div class="session-meta" id="sessionMeta" style="display:none"></div>
     <div class="filter-bar" id="filterBar">
@@ -1005,7 +945,6 @@
     const res  = await fetch('/clips-list');
     const data = await res.json();
     allSessions = data.sessions;
-    renderArchived(data.archived || []);
 
     renderSessionTabs();
 
@@ -1488,55 +1427,6 @@
     return name;
   }
 
-  // ── archived section ──────────────────────────────────────────
-  function renderArchived(titles) {
-    const section = document.getElementById('archivedSection');
-    const toggle  = document.getElementById('archivedToggle');
-    const list    = document.getElementById('archivedList');
-
-    if (titles.length === 0) {
-      section.style.display = 'none';
-      return;
-    }
-
-    section.style.display = 'block';
-    toggle.textContent = `ARCHIVED (${titles.length})`;
-    toggle.classList.toggle('has-items', titles.length > 0);
-
-    list.innerHTML = '';
-    titles.forEach(title => {
-      const row = document.createElement('div');
-      row.className = 'archived-row';
-
-      const name = document.createElement('span');
-      name.textContent = title;
-      row.appendChild(name);
-
-      const btn = document.createElement('button');
-      btn.className = 'restore-btn';
-      btn.textContent = 'RESTORE';
-      btn.addEventListener('click', async () => {
-        btn.disabled = true;
-        btn.textContent = '...';
-        const res = await fetch(`/unarchive/${encodeURIComponent(title)}`, { method: 'POST' });
-        const data = await res.json();
-        if (data.ok) {
-          await loadClips(title);
-        } else {
-          btn.disabled = false;
-          btn.textContent = 'RESTORE';
-          alert('Restore failed: ' + (data.error || 'unknown'));
-        }
-      });
-      row.appendChild(btn);
-      list.appendChild(row);
-    });
-  }
-
-  function toggleArchived() {
-    document.getElementById('archivedList').classList.toggle('open');
-  }
-
   // ── generate thumbs ───────────────────────────────────────────
   async function generateThumbs() {
     if (allSessions.length === 0) return;
@@ -1558,27 +1448,6 @@
       btn.textContent = 'THUMBS';
     }
     setTimeout(() => { btn.textContent = 'THUMBS'; btn.disabled = false; }, 3000);
-  }
-
-  // ── archive ───────────────────────────────────────────────────
-  async function archiveSession() {
-    if (allSessions.length === 0) return;
-    const session = allSessions[currentSessionIdx];
-    if (!confirm(`Archive "${session.title}"?\n\nIt will be moved to clips/archived/ and removed from the review list.`)) return;
-    const btn = document.getElementById('archiveBtn');
-    btn.disabled = true;
-    try {
-      const res = await fetch(`/archive/${encodeURIComponent(session.title)}`, { method: 'POST' });
-      const data = await res.json();
-      if (data.ok) {
-        await loadClips(null);
-      } else {
-        alert('Archive failed: ' + (data.error || 'unknown error'));
-      }
-    } catch (e) {
-      alert('Archive request failed.');
-    }
-    btn.disabled = false;
   }
 
   // ── manual cut ───────────────────────────────────────────────

@@ -1,5 +1,6 @@
 downloads/
 clips/
+archive/
 .venv/
 __pycache__/
 *.pyc

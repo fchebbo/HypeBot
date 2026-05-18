@@ -1,0 +1,661 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>HypeBot — Archive</title>
+  <link rel="icon" type="image/png" href="/static/favicon.png"/>
+  <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet"/>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --red:     #ff2d2d;
+      --red-dim: #991a1a;
+      --bg:      #0a0a0a;
+      --surface: #111111;
+      --border:  #222222;
+      --text:    #f0f0f0;
+      --muted:   #555555;
+      --green:   #00ff88;
+      --mono:    'DM Mono', monospace;
+      --display: 'Bebas Neue', sans-serif;
+    }
+
+    html, body { min-height: 100%; background: var(--bg); color: var(--text); font-family: var(--mono); }
+
+    body::before {
+      content: '';
+      position: fixed;
+      inset: 0;
+      background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.04'/%3E%3C/svg%3E");
+      pointer-events: none;
+      z-index: 999;
+    }
+
+    .page { min-height: 100vh; display: flex; flex-direction: column; align-items: center; padding: 60px 20px 80px; gap: 32px; }
+
+    .header { text-align: center; }
+    .logo { font-family: var(--display); font-size: clamp(48px, 8vw, 80px); letter-spacing: 0.04em; line-height: 1; color: var(--text); }
+    .logo span { color: var(--red); }
+    .tagline { font-size: 11px; letter-spacing: 0.3em; text-transform: uppercase; color: var(--muted); margin-top: 6px; }
+    .back { font-size: 10px; letter-spacing: 0.15em; text-transform: uppercase; color: var(--muted); text-decoration: none; border: 1px solid var(--border); border-radius: 2px; padding: 4px 12px; margin-top: 10px; display: inline-block; transition: color 0.15s, border-color 0.15s; }
+    .back:hover { color: var(--text); border-color: var(--muted); }
+
+    /* ── top bar ── */
+    .top-bar { width: 100%; max-width: 960px; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+    .section-heading { font-family: var(--display); font-size: 32px; letter-spacing: 0.06em; flex: 1; }
+
+    .run-btn {
+      background: var(--red);
+      border: none;
+      border-radius: 2px;
+      color: #fff;
+      cursor: pointer;
+      font-family: var(--display);
+      font-size: 16px;
+      letter-spacing: 0.1em;
+      padding: 8px 24px;
+      transition: background 0.15s;
+      white-space: nowrap;
+    }
+    .run-btn:hover { background: #ff4444; }
+    .run-btn:disabled { background: var(--red-dim); cursor: not-allowed; }
+
+    /* ── month tabs ── */
+    .month-tabs { display: flex; gap: 0; border-bottom: 1px solid var(--border); width: 100%; max-width: 960px; overflow-x: auto; }
+    .month-tab {
+      background: none;
+      border: none;
+      border-bottom: 2px solid transparent;
+      margin-bottom: -1px;
+      color: var(--muted);
+      cursor: pointer;
+      font-family: var(--display);
+      font-size: 16px;
+      letter-spacing: 0.1em;
+      padding: 6px 20px 8px;
+      white-space: nowrap;
+      transition: color 0.15s, border-color 0.15s;
+    }
+    .month-tab.active { color: var(--text); border-bottom-color: var(--red); }
+    .month-tab:hover { color: var(--text); }
+
+    /* ── content ── */
+    .archive-content { width: 100%; max-width: 960px; }
+
+    .empty-state { color: var(--muted); font-size: 12px; padding: 60px 20px; text-align: center; letter-spacing: 0.1em; }
+
+    /* ── venue section ── */
+    .venue-section { margin-bottom: 40px; }
+    .venue-header {
+      font-family: var(--display);
+      font-size: 22px;
+      letter-spacing: 0.08em;
+      color: var(--text);
+      border-bottom: 1px solid var(--border);
+      padding-bottom: 8px;
+      margin-bottom: 16px;
+      display: flex;
+      align-items: baseline;
+      gap: 12px;
+    }
+    .venue-source { font-family: var(--mono); font-size: 10px; color: var(--muted); letter-spacing: 0.05em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 260px; }
+    .copy-btn {
+      background: none; border: 1px solid var(--border); border-radius: 2px; color: var(--muted);
+      cursor: pointer; font-family: var(--mono); font-size: 9px; letter-spacing: 0.1em;
+      padding: 1px 6px; white-space: nowrap; transition: all 0.15s; flex-shrink: 0;
+    }
+    .copy-btn:hover { color: var(--text); border-color: var(--muted); }
+    .copy-btn.copied { color: var(--green); border-color: var(--green); }
+
+    .sub-label { font-size: 10px; letter-spacing: 0.25em; text-transform: uppercase; color: var(--muted); margin: 20px 0 10px; }
+
+    /* ── clip grid ── */
+    .clips-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+
+    .clip-card { background: var(--surface); border: 1px solid var(--border); border-radius: 2px; overflow: hidden; position: relative; }
+    .clip-card::before { content: ''; position: absolute; top: 0; left: 0; right: 0; height: 2px; background: var(--red); z-index: 1; }
+
+    /* thumb / video wrapper */
+    .clip-media { position: relative; background: #000; overflow: hidden; }
+    .clip-media.vert  { aspect-ratio: 9 / 16; }
+    .clip-media.wide  { aspect-ratio: 16 / 9; }
+
+    .clip-media img  { width: 100%; height: 100%; object-fit: cover; display: block; }
+    .clip-media video { width: 100%; height: 100%; object-fit: contain; display: block; }
+
+    .play-overlay {
+      position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+      cursor: pointer; transition: background 0.15s;
+    }
+    .play-overlay:hover { background: rgba(255,255,255,0.05); }
+    .play-icon {
+      width: 44px; height: 44px; border-radius: 50%;
+      background: rgba(0,0,0,0.65); border: 2px solid rgba(255,255,255,0.5);
+      display: flex; align-items: center; justify-content: center;
+    }
+    .play-icon svg { width: 18px; height: 18px; fill: #fff; margin-left: 3px; }
+
+    .clip-footer { padding: 8px 10px; display: flex; flex-direction: column; gap: 4px; }
+    .clip-name { font-size: 11px; color: var(--text); letter-spacing: 0.04em; }
+    .clip-filename { font-size: 9px; color: var(--muted); letter-spacing: 0.03em; word-break: break-all; }
+
+    .toggle-btn {
+      background: none;
+      border: 1px solid var(--border);
+      border-radius: 2px;
+      color: var(--muted);
+      cursor: pointer;
+      font-family: var(--display);
+      font-size: 11px;
+      letter-spacing: 0.06em;
+      padding: 2px 8px;
+      transition: all 0.15s;
+    }
+    .toggle-btn.active { background: var(--red); border-color: var(--red); color: #fff; }
+    .toggle-btn:hover:not(.active) { color: var(--text); border-color: var(--muted); }
+
+    /* collapsible venue */
+    .venue-header { cursor: pointer; user-select: none; }
+    .venue-chevron { font-size: 14px; color: var(--muted); transition: transform 0.2s; margin-left: auto; flex-shrink: 0; }
+    .venue-section.collapsed .venue-chevron { transform: rotate(-90deg); }
+    .venue-body { overflow: hidden; }
+    .venue-section.collapsed .venue-body { display: none; }
+
+    /* finals / montages / processed use wider cards */
+    .finals-grid, .montages-grid, .dankify-grid, .replay-grid, .stitch-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+    .finals-grid .clip-card::before   { background: var(--green); }
+    .montages-grid .clip-card::before { background: #e8ff00; }
+    .dankify-grid .clip-card::before  { background: #ff8800; }
+    .replay-grid .clip-card::before   { background: #00aaff; }
+    .stitch-grid .clip-card::before   { background: #cc44ff; }
+
+    /* ── preview modal ── */
+    .modal-overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.8);
+      z-index: 1000;
+      align-items: center;
+      justify-content: center;
+    }
+    .modal-overlay.show { display: flex; }
+    .modal {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 2px;
+      padding: 32px;
+      max-width: 420px;
+      width: 90%;
+      position: relative;
+    }
+    .modal::before { content: ''; position: absolute; top: 0; left: 0; right: 0; height: 2px; background: var(--red); }
+    .modal-title { font-family: var(--display); font-size: 24px; letter-spacing: 0.08em; margin-bottom: 20px; }
+    .modal-stat { display: flex; justify-content: space-between; font-size: 12px; padding: 6px 0; border-bottom: 1px solid var(--border); }
+    .modal-stat:last-of-type { border-bottom: none; }
+    .modal-stat-val { color: var(--green); font-size: 13px; }
+    .modal-actions { display: flex; gap: 10px; margin-top: 24px; }
+    .modal-confirm {
+      background: var(--red);
+      border: none;
+      border-radius: 2px;
+      color: #fff;
+      cursor: pointer;
+      font-family: var(--display);
+      font-size: 16px;
+      letter-spacing: 0.1em;
+      padding: 10px 0;
+      flex: 1;
+      transition: background 0.15s;
+    }
+    .modal-confirm:hover { background: #ff4444; }
+    .modal-cancel {
+      background: none;
+      border: 1px solid var(--border);
+      border-radius: 2px;
+      color: var(--muted);
+      cursor: pointer;
+      font-family: var(--display);
+      font-size: 16px;
+      letter-spacing: 0.1em;
+      padding: 10px 20px;
+      transition: all 0.15s;
+    }
+    .modal-cancel:hover { color: var(--text); border-color: var(--muted); }
+
+    .log-label { font-size: 10px; letter-spacing: 0.25em; text-transform: uppercase; color: var(--muted); margin-bottom: 6px; }
+    .log-box { background: var(--bg); border: 1px solid var(--border); border-radius: 2px; padding: 12px; height: 120px; overflow-y: auto; font-size: 11px; line-height: 1.7; color: var(--green); }
+  </style>
+</head>
+<body>
+<div class="page">
+
+  <header class="header">
+    <div class="logo">HYPE<span>BOT</span> · ARCHIVE</div>
+    <p class="tagline">Curated clip library · SoCal Smash</p>
+    <a class="back" href="/">← Back to HypeBot</a>
+  </header>
+
+  <div class="top-bar">
+    <span class="section-heading">LIBRARY</span>
+    <button class="toggle-btn" id="collapseAllBtn" onclick="toggleAllVenues()" style="font-size:12px;padding:4px 14px;">COLLAPSE ALL</button>
+    <button class="run-btn" id="runBtn" onclick="previewArchive()">RUN ARCHIVE</button>
+  </div>
+
+  <div class="month-tabs" id="monthTabs"></div>
+
+  <div class="archive-content" id="archiveContent">
+    <div class="empty-state">No archive yet — click RUN ARCHIVE to create one.</div>
+  </div>
+
+</div>
+
+<!-- Preview / progress modal -->
+<div class="modal-overlay" id="modalOverlay">
+  <div class="modal">
+    <div class="modal-title" id="modalTitle">ARCHIVE PREVIEW</div>
+    <div id="modalStats"></div>
+    <div id="modalLogWrap" style="display:none; margin-top:16px;">
+      <div class="log-label">Progress</div>
+      <div class="log-box" id="modalLog"></div>
+    </div>
+    <div class="modal-actions" id="modalActions">
+      <button class="modal-confirm" id="modalConfirm" onclick="confirmArchive()">CONFIRM</button>
+      <button class="modal-cancel" onclick="closeModal()">CANCEL</button>
+    </div>
+  </div>
+</div>
+
+<script>
+  let months = [];
+  let currentMonth = null;
+  let pendingStats = null;
+
+  // ── init ──────────────────────────────────────────────────────
+  async function loadArchive() {
+    const res  = await fetch('/archive-list');
+    const data = await res.json();
+    months = data.months || [];
+    renderMonthTabs();
+    if (months.length > 0) {
+      selectMonth(months[0].month);
+    }
+  }
+
+  function renderMonthTabs() {
+    const tabs = document.getElementById('monthTabs');
+    tabs.innerHTML = '';
+    if (months.length === 0) return;
+    months.forEach(m => {
+      const btn = document.createElement('button');
+      btn.className = 'month-tab';
+      btn.textContent = m.month;
+      btn.addEventListener('click', () => selectMonth(m.month));
+      tabs.appendChild(btn);
+    });
+  }
+
+  function selectMonth(month) {
+    currentMonth = month;
+    document.querySelectorAll('.month-tab').forEach(b => {
+      b.classList.toggle('active', b.textContent === month);
+    });
+    const m = months.find(x => x.month === month);
+    renderMonth(month, m ? m.meta : {});
+  }
+
+  // ── render month ──────────────────────────────────────────────
+  function renderMonth(month, meta) {
+    const content = document.getElementById('archiveContent');
+    const clips    = meta.clips    || {};
+    const finals   = meta.finals   || {};
+    const montages = meta.montages || {};
+    const dankify  = meta.dankify  || {};
+    const replay   = meta.replay   || {};
+    const stitch   = meta.stitch   || {};
+
+    const allEmpty = [clips, finals, montages, dankify, replay, stitch].every(o => !Object.keys(o).length);
+    if (allEmpty) {
+      content.innerHTML = '<div class="empty-state">No clips in this archive period.</div>';
+      return;
+    }
+
+    // Group everything by venue
+    const venues = {};
+    function addToVenue(fname, entry, type) {
+      const v = entry.venue || 'Unknown';
+      if (!venues[v]) venues[v] = { source: entry.source || '', clips: [], finals: [], montages: [], dankify: [], replay: [], stitch: [] };
+      venues[v][type].push({ fname, entry });
+    }
+    Object.entries(clips).forEach(([f, e]) => {
+      if (f.endsWith('_vertical.mp4')) addToVenue(f, e, 'clips');
+    });
+    Object.entries(finals).forEach(([f, e])   => addToVenue(f, e, 'finals'));
+    Object.entries(montages).forEach(([f, e]) => addToVenue(f, e, 'montages'));
+    Object.entries(dankify).forEach(([f, e])  => addToVenue(f, e, 'dankify'));
+    Object.entries(replay).forEach(([f, e])   => addToVenue(f, e, 'replay'));
+    Object.entries(stitch).forEach(([f, e])   => addToVenue(f, e, 'stitch'));
+
+    content.innerHTML = '';
+    Object.entries(venues).forEach(([venue, data]) => {
+      content.appendChild(makeVenueSection(month, venue, data));
+    });
+  }
+
+  // ── IntersectionObserver for lazy thumb loading ───────────────
+  const thumbObserver = new IntersectionObserver((entries) => {
+    entries.forEach(entry => {
+      if (!entry.isIntersecting) return;
+      const img = entry.target;
+      if (img.dataset.src) { img.src = img.dataset.src; delete img.dataset.src; }
+      thumbObserver.unobserve(img);
+    });
+  }, { rootMargin: '200px' });
+
+  const PLAY_SVG = `<svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>`;
+
+  function makeMediaWrap(isVert) {
+    const wrap = document.createElement('div');
+    wrap.className = 'clip-media ' + (isVert ? 'vert' : 'wide');
+    return wrap;
+  }
+
+  function attachThumb(wrap, thumbUrl, videoUrl, isVert) {
+    const img = document.createElement('img');
+    img.dataset.src = thumbUrl;
+    img.alt = '';
+    thumbObserver.observe(img);
+
+    const overlay = document.createElement('div');
+    overlay.className = 'play-overlay';
+    overlay.innerHTML = `<div class="play-icon">${PLAY_SVG}</div>`;
+    overlay.addEventListener('click', () => {
+      wrap.innerHTML = '';
+      wrap.className = 'clip-media ' + (isVert ? 'vert' : 'wide');
+      const vid = document.createElement('video');
+      vid.src = videoUrl;
+      vid.controls = true;
+      vid.autoplay = true;
+      wrap.appendChild(vid);
+    });
+
+    wrap.appendChild(img);
+    wrap.appendChild(overlay);
+  }
+
+  function makeVenueSection(month, venue, data) {
+    const sec = document.createElement('div');
+    sec.className = 'venue-section';
+
+    const hdr = document.createElement('div');
+    hdr.className = 'venue-header';
+    hdr.innerHTML = `<span>${venue}</span><span class="venue-source" title="${data.source}">${data.source}</span>`;
+    if (data.source) {
+      const copyBtn = document.createElement('button');
+      copyBtn.className = 'copy-btn';
+      copyBtn.textContent = 'COPY';
+      copyBtn.title = data.source;
+      copyBtn.addEventListener('click', e => {
+        e.stopPropagation();
+        navigator.clipboard.writeText(data.source).then(() => {
+          copyBtn.textContent = 'COPIED';
+          copyBtn.classList.add('copied');
+          setTimeout(() => { copyBtn.textContent = 'COPY'; copyBtn.classList.remove('copied'); }, 1500);
+        });
+      });
+      hdr.appendChild(copyBtn);
+    }
+    const chevron = document.createElement('span');
+    chevron.className = 'venue-chevron';
+    chevron.textContent = '▾';
+    hdr.appendChild(chevron);
+    hdr.addEventListener('click', () => { sec.classList.toggle('collapsed'); updateCollapseBtn(); });
+    sec.appendChild(hdr);
+
+    const body = document.createElement('div');
+    body.className = 'venue-body';
+
+    if (data.clips.length) {
+      const lbl = document.createElement('div');
+      lbl.className = 'sub-label';
+      lbl.textContent = `Clips (${data.clips.length})`;
+      body.appendChild(lbl);
+      const grid = document.createElement('div');
+      grid.className = 'clips-grid';
+      data.clips.forEach(({ fname, entry }) => grid.appendChild(makeClipCard(month, fname, entry)));
+      body.appendChild(grid);
+    }
+
+    if (data.finals.length) {
+      const lbl = document.createElement('div');
+      lbl.className = 'sub-label';
+      lbl.textContent = `Finals / Tier 1 (${data.finals.length})`;
+      body.appendChild(lbl);
+      const grid = document.createElement('div');
+      grid.className = 'finals-grid';
+      data.finals.forEach(({ fname }) => grid.appendChild(makeSimpleCard(month, 'finals', fname)));
+      body.appendChild(grid);
+    }
+
+    if (data.montages.length) {
+      const lbl = document.createElement('div');
+      lbl.className = 'sub-label';
+      lbl.textContent = `Montages (${data.montages.length})`;
+      body.appendChild(lbl);
+      const grid = document.createElement('div');
+      grid.className = 'montages-grid';
+      data.montages.forEach(({ fname }) => grid.appendChild(makeSimpleCard(month, 'montages', fname, false)));
+      body.appendChild(grid);
+    }
+
+    const processed = [
+      { key: 'dankify', label: 'Dankify',         gridClass: 'dankify-grid', vert: true  },
+      { key: 'replay',  label: 'Replay / Slowmo',  gridClass: 'replay-grid',  vert: true  },
+      { key: 'stitch',  label: 'Stitch',           gridClass: 'stitch-grid',  vert: false },
+    ];
+    processed.forEach(({ key, label, gridClass, vert }) => {
+      if (!data[key] || !data[key].length) return;
+      const lbl = document.createElement('div');
+      lbl.className = 'sub-label';
+      lbl.textContent = `${label} (${data[key].length})`;
+      body.appendChild(lbl);
+      const grid = document.createElement('div');
+      grid.className = gridClass;
+      data[key].forEach(({ fname }) => grid.appendChild(makeSimpleCard(month, key, fname, vert)));
+      body.appendChild(grid);
+    });
+
+    sec.appendChild(body);
+    return sec;
+  }
+
+  function makeClipCard(month, fname, entry) {
+    const card = document.createElement('div');
+    card.className = 'clip-card';
+
+    const vertUrl  = `/archive-serve/${month}/vertical/${encodeURIComponent(fname)}`;
+    const thumbUrl = `/archive-thumb/${month}/vertical/${encodeURIComponent(fname)}`;
+    const wrap = makeMediaWrap(true);
+    attachThumb(wrap, thumbUrl, vertUrl, true);
+
+    const footer = document.createElement('div');
+    footer.className = 'clip-footer';
+    const nameEl = document.createElement('span');
+    nameEl.className = 'clip-name';
+    nameEl.textContent = formatClipName(fname);
+    footer.appendChild(nameEl);
+    const fileEl = document.createElement('span');
+    fileEl.className = 'clip-filename';
+    fileEl.textContent = rawFilename(fname);
+    footer.appendChild(fileEl);
+
+    if (entry.has_original) {
+      const origFname = fname.replace('_vertical.mp4', '_original.mp4');
+      const origUrl   = `/archive-serve/${month}/original/${encodeURIComponent(origFname)}`;
+      const origThumb = `/archive-thumb/${month}/original/${encodeURIComponent(origFname)}`;
+      const toggleRow = document.createElement('div');
+      toggleRow.style.cssText = 'display:flex;gap:6px;';
+
+      const vertBtn = document.createElement('button');
+      vertBtn.className = 'toggle-btn active';
+      vertBtn.textContent = 'VERT';
+      vertBtn.addEventListener('click', () => {
+        wrap.innerHTML = '';
+        wrap.className = 'clip-media vert';
+        attachThumb(wrap, thumbUrl, vertUrl, true);
+        vertBtn.classList.add('active'); origBtn.classList.remove('active');
+      });
+
+      const origBtn = document.createElement('button');
+      origBtn.className = 'toggle-btn';
+      origBtn.textContent = '16:9';
+      origBtn.addEventListener('click', () => {
+        wrap.innerHTML = '';
+        wrap.className = 'clip-media wide';
+        attachThumb(wrap, origThumb, origUrl, false);
+        origBtn.classList.add('active'); vertBtn.classList.remove('active');
+      });
+
+      toggleRow.appendChild(vertBtn);
+      toggleRow.appendChild(origBtn);
+      footer.appendChild(toggleRow);
+    }
+
+    card.appendChild(wrap);
+    card.appendChild(footer);
+    return card;
+  }
+
+  function makeSimpleCard(month, subdir, fname, isVert = true) {
+    const card = document.createElement('div');
+    card.className = 'clip-card';
+
+    const videoUrl = `/archive-serve/${month}/${subdir}/${encodeURIComponent(fname)}`;
+    const thumbUrl = `/archive-thumb/${month}/${subdir}/${encodeURIComponent(fname)}`;
+    const wrap = makeMediaWrap(isVert);
+    attachThumb(wrap, thumbUrl, videoUrl, isVert);
+
+    const footer = document.createElement('div');
+    footer.className = 'clip-footer';
+    const nameEl = document.createElement('span');
+    nameEl.className = 'clip-name';
+    nameEl.textContent = formatClipName(fname);
+    footer.appendChild(nameEl);
+    const fileEl = document.createElement('span');
+    fileEl.className = 'clip-filename';
+    fileEl.textContent = rawFilename(fname);
+    footer.appendChild(fileEl);
+
+    card.appendChild(wrap);
+    card.appendChild(footer);
+    return card;
+  }
+
+  function rawFilename(fname) {
+    return fname.includes('__') ? fname.split('__').slice(1).join('__') : fname;
+  }
+
+  function formatClipName(fname) {
+    const base = rawFilename(fname);
+    const m = base.match(/clip_(\d+)_(\d+)m(\d+)s/);
+    if (m) return `Game ${m[1]}  ·  ${m[2]}:${m[3].padStart(2, '0')}`;
+    return base.replace(/_vertical\.mp4|_final\.mp4|_original\.mp4|_dankify\.mp4|_replay\.mp4|_stitch\.mp4/g, '').replace(/_/g, ' ');
+  }
+
+  function toggleAllVenues() {
+    const sections = document.querySelectorAll('.venue-section');
+    const anyExpanded = [...sections].some(s => !s.classList.contains('collapsed'));
+    sections.forEach(s => s.classList.toggle('collapsed', anyExpanded));
+    updateCollapseBtn();
+  }
+
+  function updateCollapseBtn() {
+    const btn = document.getElementById('collapseAllBtn');
+    if (!btn) return;
+    const sections = document.querySelectorAll('.venue-section');
+    const anyExpanded = [...sections].some(s => !s.classList.contains('collapsed'));
+    btn.textContent = anyExpanded ? 'COLLAPSE ALL' : 'EXPAND ALL';
+  }
+
+  // ── archive operation ─────────────────────────────────────────
+  async function previewArchive() {
+    document.getElementById('runBtn').disabled = true;
+    const res  = await fetch('/run-archive', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ preview: true }),
+    });
+    const data = await res.json();
+    document.getElementById('runBtn').disabled = false;
+
+    if (!data.ok) {
+      alert('Preview failed: ' + (data.error || 'unknown'));
+      return;
+    }
+
+    pendingStats = data.stats;
+    const s = data.stats;
+    document.getElementById('modalTitle').textContent = 'ARCHIVE PREVIEW';
+    const extraRows = [
+      s.dankify ? `<div class="modal-stat"><span>Dankify</span><span class="modal-stat-val">${s.dankify}</span></div>` : '',
+      s.replay  ? `<div class="modal-stat"><span>Replay / Slowmo</span><span class="modal-stat-val">${s.replay}</span></div>` : '',
+      s.stitch  ? `<div class="modal-stat"><span>Stitch</span><span class="modal-stat-val">${s.stitch}</span></div>` : '',
+    ].join('');
+    document.getElementById('modalStats').innerHTML = `
+      <div class="modal-stat"><span>Month</span><span class="modal-stat-val">${s.month}</span></div>
+      <div class="modal-stat"><span>Sessions</span><span class="modal-stat-val">${s.sessions}</span></div>
+      <div class="modal-stat"><span>Clips (flagged / processed)</span><span class="modal-stat-val">${s.clips}</span></div>
+      <div class="modal-stat"><span>Finals</span><span class="modal-stat-val">${s.finals}</span></div>
+      <div class="modal-stat"><span>Montages</span><span class="modal-stat-val">${s.montages}</span></div>
+      ${extraRows}
+      <div class="modal-stat"><span>Estimated size</span><span class="modal-stat-val">${s.size_mb} MB</span></div>
+    `;
+    document.getElementById('modalLogWrap').style.display = 'none';
+    document.getElementById('modalActions').style.display = 'flex';
+    document.getElementById('modalOverlay').classList.add('show');
+  }
+
+  async function confirmArchive() {
+    document.getElementById('modalConfirm').disabled = true;
+    document.getElementById('modalTitle').textContent = 'ARCHIVING...';
+    document.getElementById('modalLogWrap').style.display = 'block';
+    document.getElementById('modalActions').style.display = 'none';
+    const log = document.getElementById('modalLog');
+    log.textContent = 'Copying files...';
+
+    const res  = await fetch('/run-archive', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ preview: false }),
+    });
+    const data = await res.json();
+
+    if (data.ok) {
+      const s = data.stats;
+      const parts = [`${s.clips} clips`, `${s.finals} finals`, `${s.montages} montages`];
+      if (s.dankify) parts.push(`${s.dankify} dankify`);
+      if (s.replay)  parts.push(`${s.replay} replay`);
+      if (s.stitch)  parts.push(`${s.stitch} stitch`);
+      log.textContent = `✅  Done — ${parts.join(', ')} copied to archive/${s.month}/`;
+      document.getElementById('modalTitle').textContent = 'ARCHIVE COMPLETE';
+      document.getElementById('modalActions').innerHTML = '<button class="modal-confirm" onclick="closeModal(); loadArchive();">VIEW ARCHIVE</button>';
+      document.getElementById('modalActions').style.display = 'flex';
+    } else {
+      log.textContent = '❌  ' + (data.error || 'Archive failed.');
+      document.getElementById('modalActions').innerHTML = '<button class="modal-cancel" onclick="closeModal()">CLOSE</button>';
+      document.getElementById('modalActions').style.display = 'flex';
+    }
+    document.getElementById('modalConfirm').disabled = false;
+  }
+
+  function closeModal() {
+    document.getElementById('modalOverlay').classList.remove('show');
+    pendingStats = null;
+  }
+
+  loadArchive();
+</script>
+</body>
+</html>

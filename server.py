@@ -86,8 +86,6 @@ def clips_list():
         session_path = os.path.join(root, name)
         if not os.path.isdir(session_path):
             continue
-        if name == 'archived':
-            continue
         vert_dir   = os.path.join(session_path, 'vertical')
         orig_dir   = os.path.join(session_path, 'original')
         finals_dir = os.path.join(session_path, 'finals')
@@ -137,17 +135,11 @@ def clips_list():
                 if f.endswith('.mp4'):
                     finals.append(f'{name}/finals/{f}')
 
-        if clips or finals:
+        has_vod = bool(meta.get("vod_path") and os.path.exists(meta.get("vod_path", "")))
+        if clips or finals or has_vod:
             sessions.append({'title': name, 'clips': clips, 'finals': finals, 'meta': meta})
 
-    archived = []
-    archived_root = os.path.join(root, 'archived')
-    if os.path.exists(archived_root):
-        for name in sorted(os.listdir(archived_root), reverse=True):
-            if os.path.isdir(os.path.join(archived_root, name)):
-                archived.append(name)
-
-    return jsonify({'sessions': sessions, 'archived': archived})
+    return jsonify({'sessions': sessions})
 
 
 @app.route("/review-state/<path:session>", methods=["POST"])
@@ -181,15 +173,6 @@ def set_review_state(session):
     return jsonify({"ok": True})
 
 
-@app.route("/unarchive/<path:session>", methods=["POST"])
-def unarchive_session(session):
-    clips_root = os.path.abspath("clips")
-    src = os.path.join(clips_root, "archived", session)
-    if not os.path.exists(src):
-        return jsonify({"error": "Session not found"}), 404
-    shutil.move(src, os.path.join(clips_root, session))
-    return jsonify({"ok": True})
-
 
 @app.route("/generate-thumbs/<path:session>", methods=["POST"])
 def generate_thumbs(session):
@@ -218,17 +201,6 @@ def generate_thumbs(session):
 
     return jsonify({"ok": True, "generated": generated})
 
-
-@app.route("/archive/<path:session>", methods=["POST"])
-def archive_session(session):
-    clips_root = os.path.abspath("clips")
-    src = os.path.join(clips_root, session)
-    if not os.path.exists(src):
-        return jsonify({"error": "Session not found"}), 404
-    dest_dir = os.path.join(clips_root, "archived")
-    os.makedirs(dest_dir, exist_ok=True)
-    shutil.move(src, os.path.join(dest_dir, session))
-    return jsonify({"ok": True})
 
 
 @app.route("/render-text", methods=["POST"])
@@ -334,9 +306,9 @@ def run_replay():
 
     base       = clip_rel.replace("_vertical.mp4", "")
     out_name   = f"{base}_replay.mp4"
-    output_dir = os.path.join(clips_root, session, "slo-mo-moment")
+    output_dir = os.path.join(clips_root, session, "replay")
     output_path= os.path.join(output_dir, out_name)
-    output_rel = f"{session}/slo-mo-moment/{out_name}"
+    output_rel = f"{session}/replay/{out_name}"
 
     def do_replay():
         ok = render_replay(
@@ -609,11 +581,6 @@ def run_pipeline(url, local_path='', start_sec=None, end_sec=None):
         log("\n🔍  Scanning for KO flashes...")
         events = detect_ko_events(video_path, log_fn=log, start_scan_sec=start_sec, max_scan_sec=end_sec)
 
-        if not events:
-            log("⚠️  No KO events detected.")
-            log("__done__")
-            return
-
         safe_title = safe_folder_name(video_title)
         clips_dir = os.path.join("clips", safe_title)
         os.makedirs(clips_dir, exist_ok=True)
@@ -621,6 +588,12 @@ def run_pipeline(url, local_path='', start_sec=None, end_sec=None):
         if not os.path.exists(meta_path):
             with open(meta_path, "w") as f:
                 json.dump({"venue": video_title, "source": url or local_path, "vod_path": video_path}, f, indent=2)
+
+        if not events:
+            log("⚠️  No KO events detected. Session created — use Manual Cut to add clips.")
+            log(f"__done__:{safe_title}")
+            return
+
         cut_clips(video_path, events, output_dir=clips_dir, log_fn=log)
 
         log(f"\n✅  Done! Clips saved to: {os.path.abspath(clips_dir)}")
@@ -697,6 +670,275 @@ def safe_folder_name(title):
     invalid = r'\/:*?"<>|'
     cleaned = ''.join(c for c in title if c not in invalid).strip()[:80]
     return cleaned.rstrip('. ')
+
+
+# ── Archive ───────────────────────────────────────────────────────────────────
+
+@app.route("/archive")
+def archive_page():
+    return render_template("archive.html")
+
+
+@app.route("/archive-list")
+def archive_list():
+    archive_root = os.path.abspath("archive")
+    months = []
+    if os.path.exists(archive_root):
+        for name in sorted(os.listdir(archive_root), reverse=True):
+            month_path = os.path.join(archive_root, name)
+            if not os.path.isdir(month_path):
+                continue
+            meta_path = os.path.join(month_path, "meta.json")
+            meta = {"clips": {}, "finals": {}, "montages": {}}
+            if os.path.exists(meta_path):
+                try:
+                    with open(meta_path) as f:
+                        meta = json.load(f)
+                except Exception:
+                    pass
+            months.append({"month": name, "meta": meta})
+    return jsonify({"months": months})
+
+
+@app.route("/run-archive", methods=["POST"])
+def run_archive():
+    data         = request.get_json() or {}
+    preview_only = bool(data.get("preview", True))
+
+    clips_root   = os.path.abspath("clips")
+    archive_root = os.path.abspath("archive")
+    month        = time.strftime("%Y-%m")
+    month_dir    = os.path.join(archive_root, month)
+
+    if not os.path.exists(clips_root):
+        return jsonify({"error": "No clips folder found"}), 404
+
+    items = []  # {type, src, dest_name, venue, source, has_original}
+    session_count = 0
+
+    for session_name in sorted(os.listdir(clips_root)):
+        session_path = os.path.join(clips_root, session_name)
+        if not os.path.isdir(session_path):
+            continue
+
+        meta_path = os.path.join(session_path, "meta.json")
+        venue  = session_name
+        source = ""
+        if os.path.exists(meta_path):
+            try:
+                with open(meta_path) as f:
+                    meta = json.load(f)
+                venue  = meta.get("venue", session_name)
+                source = meta.get("source", "")
+            except Exception:
+                pass
+
+        review_path   = os.path.join(session_path, "review.json")
+        review_states = None  # None = no review file (manual folder — include everything)
+        if os.path.exists(review_path):
+            try:
+                with open(review_path) as f:
+                    review_states = json.load(f)
+            except Exception:
+                review_states = {}
+
+        vert_dir    = os.path.join(session_path, "vertical")
+        orig_dir    = os.path.join(session_path, "original")
+        finals_dir  = os.path.join(session_path, "finals")
+        montage_dir = os.path.join(session_path, "montage")
+        session_contributed = False
+        prefix = f"{session_name}__"
+
+        if os.path.exists(vert_dir):
+            for fname in sorted(os.listdir(vert_dir)):
+                if not fname.endswith("_vertical.mp4"):
+                    continue
+                base        = fname.replace("_vertical.mp4", "")
+                final_fname = base + "_final.mp4"
+                has_final   = os.path.exists(os.path.join(finals_dir, final_fname)) if os.path.exists(finals_dir) else False
+                is_flagged  = review_states is None or review_states.get(base) == "flagged"
+                if not (is_flagged or has_final):
+                    continue
+
+                orig_fname   = base + "_original.mp4"
+                has_original = os.path.exists(os.path.join(orig_dir, orig_fname))
+                items.append({
+                    "type":         "vertical",
+                    "src":          os.path.join(vert_dir, fname),
+                    "dest_name":    prefix + fname,
+                    "venue":        venue,
+                    "source":       source,
+                    "has_original": has_original,
+                })
+                if has_original:
+                    items.append({
+                        "type":      "original",
+                        "src":       os.path.join(orig_dir, orig_fname),
+                        "dest_name": prefix + orig_fname,
+                        "venue":     venue,
+                        "source":    source,
+                    })
+                session_contributed = True
+
+        if os.path.exists(finals_dir):
+            for fname in sorted(os.listdir(finals_dir)):
+                if not fname.endswith(".mp4"):
+                    continue
+                items.append({
+                    "type":      "final",
+                    "src":       os.path.join(finals_dir, fname),
+                    "dest_name": prefix + fname,
+                    "venue":     venue,
+                    "source":    source,
+                })
+                session_contributed = True
+
+        if os.path.exists(montage_dir):
+            for fname in sorted(os.listdir(montage_dir)):
+                if not fname.endswith(".mp4"):
+                    continue
+                items.append({
+                    "type":      "montage",
+                    "src":       os.path.join(montage_dir, fname),
+                    "dest_name": prefix + fname,
+                    "venue":     venue,
+                    "source":    source,
+                })
+                session_contributed = True
+
+        # Scan all subdirs by filename suffix — handles custom folder names like slo-mo-moment
+        suffix_type_map = {
+            "_replay.mp4":  "replay",
+            "_dankify.mp4": "dankify",
+            "_stitch.mp4":  "stitch",
+        }
+        known_dirs = {"vertical", "original", "finals", "montage"}
+        already_added = {i["dest_name"] for i in items}
+        for subdir_name in sorted(os.listdir(session_path)):
+            if subdir_name.lower() in known_dirs:
+                continue
+            subdir_path = os.path.join(session_path, subdir_name)
+            if not os.path.isdir(subdir_path):
+                continue
+            for fname in sorted(os.listdir(subdir_path)):
+                proc_type = next((t for sfx, t in suffix_type_map.items() if fname.endswith(sfx)), None)
+                if proc_type is None:
+                    continue
+                dest_name = prefix + fname
+                if dest_name in already_added:
+                    continue
+                items.append({
+                    "type":      proc_type,
+                    "src":       os.path.join(subdir_path, fname),
+                    "dest_name": dest_name,
+                    "venue":     venue,
+                    "source":    source,
+                })
+                already_added.add(dest_name)
+                session_contributed = True
+
+        if session_contributed:
+            session_count += 1
+
+    clip_items    = [i for i in items if i["type"] == "vertical"]
+    final_items   = [i for i in items if i["type"] == "final"]
+    montage_items = [i for i in items if i["type"] == "montage"]
+    dankify_items = [i for i in items if i["type"] == "dankify"]
+    replay_items  = [i for i in items if i["type"] == "replay"]
+    stitch_items  = [i for i in items if i["type"] == "stitch"]
+    total_bytes   = sum(os.path.getsize(i["src"]) for i in items if os.path.exists(i["src"]))
+
+    stats = {
+        "sessions": session_count,
+        "clips":    len(clip_items),
+        "finals":   len(final_items),
+        "montages": len(montage_items),
+        "dankify":  len(dankify_items),
+        "replay":   len(replay_items),
+        "stitch":   len(stitch_items),
+        "size_mb":  round(total_bytes / (1024 * 1024), 1),
+        "month":    month,
+    }
+
+    if preview_only:
+        return jsonify({"ok": True, "preview": True, "stats": stats})
+
+    if not items:
+        return jsonify({"error": "Nothing to archive"}), 400
+
+    for subdir in ("vertical", "original", "finals", "montages", "dankify", "replay", "stitch"):
+        os.makedirs(os.path.join(month_dir, subdir), exist_ok=True)
+
+    meta_out = {"archived_at": time.strftime("%Y-%m-%d"), "clips": {}, "finals": {}, "montages": {}, "dankify": {}, "replay": {}, "stitch": {}}
+    meta_path = os.path.join(month_dir, "meta.json")
+    if os.path.exists(meta_path):
+        try:
+            with open(meta_path) as f:
+                meta_out = json.load(f)
+            for key in ("clips", "finals", "montages", "dankify", "replay", "stitch"):
+                meta_out.setdefault(key, {})
+            meta_out["archived_at"] = time.strftime("%Y-%m-%d")
+        except Exception:
+            pass
+
+    subdir_map = {"vertical": "vertical", "original": "original", "final": "finals", "montage": "montages", "dankify": "dankify", "replay": "replay", "stitch": "stitch"}
+    for item in items:
+        dest = os.path.join(month_dir, subdir_map[item["type"]], item["dest_name"])
+        shutil.copy2(item["src"], dest)
+        entry = {"venue": item["venue"], "source": item["source"]}
+        if item["type"] == "vertical":
+            entry["has_original"] = item.get("has_original", False)
+            meta_out["clips"][item["dest_name"]] = entry
+        elif item["type"] == "final":
+            meta_out["finals"][item["dest_name"]] = entry
+        elif item["type"] == "montage":
+            meta_out["montages"][item["dest_name"]] = entry
+        elif item["type"] in ("dankify", "replay", "stitch"):
+            meta_out[item["type"]][item["dest_name"]] = entry
+
+    with open(meta_path, "w") as f:
+        json.dump(meta_out, f, indent=2)
+
+    return jsonify({"ok": True, "preview": False, "stats": stats})
+
+
+@app.route("/archive-serve/<path:filename>")
+def serve_archive(filename):
+    resp = send_from_directory(os.path.abspath("archive"), filename)
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+@app.route("/archive-thumb/<path:filename>")
+def serve_archive_thumb(filename):
+    archive_root = os.path.abspath("archive")
+    video_path   = os.path.join(archive_root, filename)
+    if not os.path.exists(video_path):
+        return "", 404
+
+    parts      = filename.replace("\\", "/").split("/")
+    month      = parts[0]
+    base_name  = os.path.splitext(parts[-1])[0]
+    thumb_dir  = os.path.join(archive_root, month, "thumbs")
+    thumb_name = base_name + ".jpg"
+    thumb_path = os.path.join(thumb_dir, thumb_name)
+
+    if not os.path.exists(thumb_path):
+        os.makedirs(thumb_dir, exist_ok=True)
+        try:
+            subprocess.run(
+                ["ffmpeg", "-y", "-ss", "1", "-i", video_path,
+                 "-vframes", "1", "-q:v", "5", "-vf", "scale=320:-1", thumb_path],
+                capture_output=True, timeout=15
+            )
+        except Exception:
+            return "", 500
+
+    if not os.path.exists(thumb_path):
+        return "", 404
+
+    from flask import send_file
+    return send_file(thumb_path, mimetype="image/jpeg")
 
 
 if __name__ == "__main__":
