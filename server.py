@@ -902,6 +902,90 @@ def run_archive():
     return jsonify({"ok": True, "preview": False, "stats": stats})
 
 
+@app.route("/restore-venue", methods=["POST"])
+def restore_venue():
+    data  = request.get_json() or {}
+    month = data.get("month", "").strip()
+    venue = data.get("venue", "").strip()
+    if not month or not venue:
+        return jsonify({"error": "month and venue required"}), 400
+
+    archive_root = os.path.abspath("archive")
+    clips_root   = os.path.abspath("clips")
+    meta_path    = os.path.join(archive_root, month, "meta.json")
+    if not os.path.exists(meta_path):
+        return jsonify({"error": "Archive month not found"}), 404
+
+    with open(meta_path) as f:
+        meta = json.load(f)
+
+    # archive subdir → clips subdir
+    subdir_map = {
+        "vertical":  "vertical",
+        "original":  "original",
+        "finals":    "finals",
+        "montages":  "montage",
+        "dankify":   "dankify",
+        "replay":    "replay",
+        "stitch":    "stitch",
+    }
+    # meta key → archive subdir
+    key_subdir = {
+        "clips":    "vertical",
+        "finals":   "finals",
+        "montages": "montages",
+        "dankify":  "dankify",
+        "replay":   "replay",
+        "stitch":   "stitch",
+    }
+
+    restored = 0
+    sessions_written = set()
+
+    for meta_key, archive_subdir in key_subdir.items():
+        for fname, entry in meta.get(meta_key, {}).items():
+            if entry.get("venue") != venue:
+                continue
+            # extract session name from prefix
+            if "__" not in fname:
+                continue
+            session_name = fname.split("__")[0]
+            bare_name    = fname.split("__", 1)[1]
+
+            clips_subdir = subdir_map[archive_subdir]
+            dest_dir  = os.path.join(clips_root, session_name, clips_subdir)
+            os.makedirs(dest_dir, exist_ok=True)
+            src = os.path.join(archive_root, month, archive_subdir, fname)
+            if os.path.exists(src):
+                shutil.copy2(src, os.path.join(dest_dir, bare_name))
+                restored += 1
+
+            # also restore paired original for vertical clips
+            if meta_key == "clips" and entry.get("has_original"):
+                orig_fname = fname.replace("_vertical.mp4", "_original.mp4")
+                orig_bare  = bare_name.replace("_vertical.mp4", "_original.mp4")
+                orig_src   = os.path.join(archive_root, month, "original", orig_fname)
+                orig_dest  = os.path.join(clips_root, session_name, "original")
+                os.makedirs(orig_dest, exist_ok=True)
+                if os.path.exists(orig_src):
+                    shutil.copy2(orig_src, os.path.join(orig_dest, orig_bare))
+
+            # write session meta.json if not already done
+            if session_name not in sessions_written:
+                session_dir   = os.path.join(clips_root, session_name)
+                sess_meta_path = os.path.join(session_dir, "meta.json")
+                if not os.path.exists(sess_meta_path):
+                    with open(sess_meta_path, "w") as f:
+                        json.dump({
+                            "venue":    entry.get("venue", session_name),
+                            "source":   entry.get("source", ""),
+                            "vod_path": "",
+                        }, f, indent=2)
+                sessions_written.add(session_name)
+
+    return jsonify({"ok": True, "restored": restored})
+
+
 @app.route("/archive-serve/<path:filename>")
 def serve_archive(filename):
     resp = send_from_directory(os.path.abspath("archive"), filename)

@@ -101,13 +101,15 @@
       gap: 12px;
     }
     .venue-source { font-family: var(--mono); font-size: 10px; color: var(--muted); letter-spacing: 0.05em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 260px; }
-    .copy-btn {
+    .copy-btn, .restore-btn {
       background: none; border: 1px solid var(--border); border-radius: 2px; color: var(--muted);
       cursor: pointer; font-family: var(--mono); font-size: 9px; letter-spacing: 0.1em;
       padding: 1px 6px; white-space: nowrap; transition: all 0.15s; flex-shrink: 0;
     }
-    .copy-btn:hover { color: var(--text); border-color: var(--muted); }
+    .copy-btn:hover, .restore-btn:hover { color: var(--text); border-color: var(--muted); }
     .copy-btn.copied { color: var(--green); border-color: var(--green); }
+    .restore-btn.done { color: var(--green); border-color: var(--green); }
+    .restore-btn.error { color: var(--red); border-color: var(--red); }
 
     .sub-label { font-size: 10px; letter-spacing: 0.25em; text-transform: uppercase; color: var(--muted); margin: 20px 0 10px; }
 
@@ -407,6 +409,16 @@
       });
       hdr.appendChild(copyBtn);
     }
+    const restoreBtn = document.createElement('button');
+    restoreBtn.className = 'restore-btn';
+    restoreBtn.textContent = 'RESTORE';
+    restoreBtn.title = 'Copy clips back to clips/ folder';
+    restoreBtn.addEventListener('click', e => {
+      e.stopPropagation();
+      restoreVenue(currentMonth, venue, restoreBtn);
+    });
+    hdr.appendChild(restoreBtn);
+
     const chevron = document.createElement('span');
     chevron.className = 'venue-chevron';
     chevron.textContent = '▾';
@@ -562,6 +574,31 @@
     const m = base.match(/clip_(\d+)_(\d+)m(\d+)s/);
     if (m) return `Game ${m[1]}  ·  ${m[2]}:${m[3].padStart(2, '0')}`;
     return base.replace(/_vertical\.mp4|_final\.mp4|_original\.mp4|_dankify\.mp4|_replay\.mp4|_stitch\.mp4/g, '').replace(/_/g, ' ');
+  }
+
+  async function restoreVenue(month, venue, btn) {
+    btn.disabled = true;
+    btn.textContent = 'RESTORING...';
+    try {
+      const res  = await fetch('/restore-venue', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ month, venue }),
+      });
+      const data = await res.json();
+      if (data.ok) {
+        btn.textContent = `RESTORED (${data.restored})`;
+        btn.classList.add('done');
+      } else {
+        btn.textContent = 'ERROR';
+        btn.classList.add('error');
+        btn.disabled = false;
+      }
+    } catch {
+      btn.textContent = 'ERROR';
+      btn.classList.add('error');
+      btn.disabled = false;
+    }
   }
 
   function toggleAllVenues() {

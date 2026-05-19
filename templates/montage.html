@@ -104,6 +104,8 @@
           <option value="radial">Clock Wipe</option>
           <option value="zoomin">Zoom + Fade</option>
           <option value="pixelize">Pixelize</option>
+          <option value="slideleft">Slide</option>
+          <option value="squeezeh">Squeeze</option>
         </select>
       </div>
       <div class="field">
@@ -145,13 +147,15 @@
     let sessionClips = [];
 
     const TRANSITION_OPTS = [
-      ['cut',      'Cut (instant)'],
-      ['flash',    'Flash to White'],
-      ['fade',     'Fade to Black'],
-      ['crossfade','Crossfade (dissolve)'],
-      ['radial',   'Clock Wipe'],
-      ['zoomin',   'Zoom + Fade'],
-      ['pixelize', 'Pixelize'],
+      ['cut',        'Cut (instant)'],
+      ['flash',      'Flash to White'],
+      ['fade',       'Fade to Black'],
+      ['crossfade',  'Crossfade (dissolve)'],
+      ['radial',     'Clock Wipe'],
+      ['zoomin',     'Zoom + Fade'],
+      ['pixelize',   'Pixelize'],
+      ['slideleft',  'Slide'],
+      ['squeezeh',   'Squeeze'],
     ];
 
     function transitionOptsHtml(selected) {

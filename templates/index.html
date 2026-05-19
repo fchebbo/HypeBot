@@ -1238,12 +1238,14 @@
     transitionSelect.style.cssText = 'width:auto; cursor:pointer; appearance:auto;';
     transitionSelect.disabled = true;
     [
-      ['none',      'No transition'],
-      ['radial',    'Clock Wipe'],
-      ['fadewhite', 'White Flash'],
-      ['crossfade', 'Crossfade'],
-      ['zoomin',    'Zoom + Fade'],
-      ['pixelize',  'Pixelize'],
+      ['none',       'No transition'],
+      ['radial',     'Clock Wipe'],
+      ['fadewhite',  'White Flash'],
+      ['crossfade',  'Crossfade'],
+      ['zoomin',     'Zoom + Fade'],
+      ['pixelize',   'Pixelize'],
+      ['slideleft',  'Slide'],
+      ['squeezeh',   'Squeeze'],
     ].forEach(([val, label]) => {
       const opt = document.createElement('option');
       opt.value = val;
