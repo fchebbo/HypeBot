@@ -10,7 +10,7 @@ import queue
 import subprocess
 import yt_dlp
 from detector import detect_ko_events, cut_clips, cut_extended_vertical, cut_manual_clip
-from renderer import render_with_text, render_stitch, render_replay, render_montage, render_dankify
+from renderer import render_with_text, render_stitch, render_replay, render_montage, render_dankify, render_fade_to_text
 
 app = Flask(__name__)
 log_queue = queue.Queue()
@@ -212,6 +212,7 @@ def render_text_route():
     hook            = bool(data.get("hook", False))
     hook_offset     = float(data.get("hook_offset", 2.8))
     hook_transition = data.get("hook_transition", "none").strip()
+    hook_only       = bool(data.get("hook_only", False))
     cut_end_sec     = float(data.get("cut_end_sec", 0.0))
     extend_sec      = float(data.get("extend_sec", 0.0))
     normalize_audio = bool(data.get("normalize_audio", False))
@@ -263,7 +264,7 @@ def render_text_route():
             capture("⚠️  VOD not found for extend — rendering standard 13s clip.")
 
     try:
-        ok = render_with_text(render_source, above, below, output_path, log_fn=capture, hook=hook, hook_offset=hook_offset, normalize_audio=normalize_audio, hook_transition=hook_transition, cut_end_sec=cut_end_sec)
+        ok = render_with_text(render_source, above, below, output_path, log_fn=capture, hook=hook, hook_offset=hook_offset, normalize_audio=normalize_audio, hook_transition=hook_transition, cut_end_sec=cut_end_sec, hook_only=hook_only)
     finally:
         if tmp_extended and os.path.exists(tmp_extended):
             try:
@@ -463,6 +464,47 @@ def run_montage():
             log("__montage_failed__")
 
     threading.Thread(target=do_montage, daemon=True).start()
+    return jsonify({"status": "started"})
+
+
+@app.route("/fadetotext")
+def fadetotext_page():
+    return render_template("fadetotext.html")
+
+
+@app.route("/run-fadetotext", methods=["POST"])
+def run_fadetotext():
+    data       = request.get_json()
+    session    = data.get("session", "").strip()
+    clip_rel   = data.get("clip", "").strip()
+    hook_offset = float(data.get("hook_offset", 5.0))
+    fade_text   = data.get("fade_text", "").strip()
+    top_text    = data.get("top_text", "").strip()
+
+    if not session or not clip_rel:
+        return jsonify({"error": "session and clip are required"}), 400
+    if not fade_text:
+        return jsonify({"error": "fade_text is required"}), 400
+
+    clips_root = os.path.abspath("clips")
+    clip_path  = os.path.join(clips_root, session, "vertical", clip_rel)
+    if not os.path.exists(clip_path):
+        return jsonify({"error": "Clip not found"}), 404
+
+    base        = clip_rel.replace("_vertical.mp4", "")
+    out_name    = f"{base}_fadetotext.mp4"
+    output_dir  = os.path.join(clips_root, session, "fadetotext")
+    output_path = os.path.join(output_dir, out_name)
+    output_rel  = f"{session}/fadetotext/{out_name}"
+
+    def do_fadetotext():
+        ok = render_fade_to_text(clip_path, hook_offset, fade_text, output_path, log_fn=log, top_text=top_text)
+        if ok:
+            log(f"__fadetotext_done__:{output_rel}")
+        else:
+            log("__fadetotext_failed__")
+
+    threading.Thread(target=do_fadetotext, daemon=True).start()
     return jsonify({"status": "started"})
 
 

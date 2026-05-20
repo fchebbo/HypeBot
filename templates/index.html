@@ -677,6 +677,7 @@
       <a class="nav-tool" href="/montage">Montage</a>
       <a class="nav-tool" href="/dankify">Dankify</a>
       <a class="nav-tool" href="/archive">Archive</a>
+      <a class="nav-tool" href="/fadetotext">Fade to Text</a>
     </nav>
   </header>
 
@@ -1253,9 +1254,26 @@
       transitionSelect.appendChild(opt);
     });
 
+    const hookOnlyRow = document.createElement('div');
+    hookOnlyRow.className = 'hook-row';
+
+    const hookOnlyCheck = document.createElement('input');
+    hookOnlyCheck.type = 'checkbox';
+    hookOnlyCheck.id = `hook-only-${clip.name}`;
+    hookOnlyCheck.disabled = true;
+
+    const hookOnlyLabel = document.createElement('label');
+    hookOnlyLabel.htmlFor = `hook-only-${clip.name}`;
+    hookOnlyLabel.textContent = 'Only KO hook (skip full clip)';
+
+    hookOnlyRow.appendChild(hookOnlyCheck);
+    hookOnlyRow.appendChild(hookOnlyLabel);
+
     hookCheck.addEventListener('change', () => {
       hookOffsetInput.disabled = !hookCheck.checked;
       transitionSelect.disabled = !hookCheck.checked;
+      hookOnlyCheck.disabled = !hookCheck.checked;
+      if (!hookCheck.checked) hookOnlyCheck.checked = false;
     });
 
     hookRow.appendChild(hookCheck);
@@ -1352,6 +1370,7 @@
             hook:            hookCheck.checked,
             hook_offset:     parseFloat(hookOffsetInput.value) || 2.8,
             hook_transition: transitionSelect.value,
+            hook_only:       hookOnlyCheck.checked,
             extend_sec:      parseFloat(extendInput.value) || 0,
             cut_end_sec:     parseFloat(cutInput.value) || 0,
             normalize_audio: normCheck.checked,
@@ -1383,6 +1402,7 @@
     });
 
     textPanel.appendChild(hookRow);
+    textPanel.appendChild(hookOnlyRow);
     textPanel.appendChild(extendRow);
     textPanel.appendChild(cutRow);
     textPanel.appendChild(normRow);

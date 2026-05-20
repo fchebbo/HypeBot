@@ -148,7 +148,7 @@ def _draw_bar_text(draw, text, clip_w, bar_top, bar_bottom, max_size=120, min_si
         y += line_h + line_gap
 
 
-def render_with_text(clip_path, above_text, below_text, output_path, log_fn=print, hook=False, hook_offset=2.8, normalize_audio=False, hook_transition='none', cut_end_sec=0.0):
+def render_with_text(clip_path, above_text, below_text, output_path, log_fn=print, hook=False, hook_offset=2.8, normalize_audio=False, hook_transition='none', cut_end_sec=0.0, hook_only=False):
     cap        = cv2.VideoCapture(clip_path)
     clip_w     = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     clip_h     = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
@@ -182,7 +182,43 @@ def render_with_text(clip_path, above_text, below_text, output_path, log_fn=prin
     if normalize_audio:
         log_fn("🔊  Audio normalization: on (compressor + hard limiter)")
 
-    if hook:
+    if hook and hook_only:
+        effective_end = round(max(0.1, total_dur - cut_end_sec), 3) if cut_end_sec > 0 else None
+        clip_end      = effective_end if effective_end else total_dur
+        hook_start    = round(max(0.0, clip_end - hook_offset), 3)
+        cut_note      = f" (cut last {cut_end_sec}s)" if effective_end else ""
+        log_fn(f"🪝  Hook only: last {hook_offset}s (from {hook_start:.2f}s){cut_note}")
+
+        hv_end  = f":end={effective_end}" if effective_end else ""
+        hv_trim = f"[0:v]trim=start={hook_start}{hv_end},setpts=PTS-STARTPTS[hv]"
+        ha_trim = f"[0:a]atrim=start={hook_start}{hv_end},asetpts=PTS-STARTPTS[ha]"
+
+        if normalize_audio:
+            audio_part = ";[ha]acompressor=threshold=0.063:ratio=15:attack=100:release=800,alimiter=limit=0.65:level=disabled[ca]"
+            audio_map  = '[ca]'
+        else:
+            audio_part = ""
+            audio_map  = '[ha]'
+
+        filter_complex = (
+            f"{hv_trim};{ha_trim};"
+            f"[hv][1:v]overlay=0:0[outv]"
+            f"{audio_part}"
+        )
+        cmd = [
+            'ffmpeg', '-y',
+            '-i', clip_path,
+            '-i', tmp_path,
+            '-filter_complex', filter_complex,
+            '-map', '[outv]',
+            '-map', audio_map,
+            '-c:v', 'libx264',
+            '-c:a', 'aac',
+            '-preset', 'ultrafast',
+            output_path,
+        ]
+
+    elif hook:
         effective_end = round(max(0.1, total_dur - cut_end_sec), 3) if cut_end_sec > 0 else None
         clip_end      = effective_end if effective_end else total_dur
         hook_start    = round(max(0.0, clip_end - hook_offset), 3)
@@ -906,6 +942,139 @@ def _extract(clip_path, ss, duration, vfilter, aspeed, out_path, label, log_fn):
         cmd += ['-af', f'atempo={aspeed}']
     cmd += ['-c:v', 'libx264', '-c:a', 'aac', '-preset', 'ultrafast', out_path]
     return _run(cmd, label, log_fn)
+
+
+def render_fade_to_text(clip_path, hook_offset, fade_text, output_path, log_fn=print, top_text=""):
+    """
+    Play clip from hook_offset seconds before end → fade to black → white text fades in.
+    Optional top_text is burned into the top bar of the clip segment.
+    """
+    cap       = cv2.VideoCapture(clip_path)
+    clip_w    = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    clip_h    = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    fps       = cap.get(cv2.CAP_PROP_FPS) or 30
+    total_dur = cap.get(cv2.CAP_PROP_FRAME_COUNT) / fps
+    cap.release()
+
+    if not clip_w or not clip_h:
+        log_fn("❌  Could not read clip dimensions.")
+        return False
+
+    hook_start     = round(max(0.0, total_dur - hook_offset), 3)
+    seg_dur        = round(total_dur - hook_start, 3)
+    fade_out_dur   = 1.0
+    card_dur       = 3.0
+    fade_in_dur    = 1.0
+    fade_out_start = round(max(0.0, seg_dur - fade_out_dur), 3)
+
+    tmp_files = []
+
+    def _tmp(suffix='.mp4'):
+        p = tempfile.NamedTemporaryFile(suffix=suffix, delete=False).name
+        tmp_files.append(p)
+        return p
+
+    try:
+        os.makedirs(os.path.dirname(output_path), exist_ok=True)
+
+        # Part 1: clip from hook_start → end with optional top text overlay + fade to black
+        log_fn(f"🎬  Extracting last {hook_offset:.1f}s (from {hook_start:.1f}s) with fade to black...")
+        part1 = _tmp()
+
+        top_bar_bottom, _ = _bar_regions(clip_w, clip_h)
+        ov_png = None
+        if top_text:
+            log_fn(f"🎨  Adding top text: '{top_text}'")
+            ov = Image.new('RGBA', (clip_w, clip_h), (0, 0, 0, 0))
+            draw = ImageDraw.Draw(ov)
+            _draw_bar_text(draw, top_text.upper(), clip_w, 0, top_bar_bottom)
+            ov_tmp = tempfile.NamedTemporaryFile(suffix='.png', delete=False)
+            ov_tmp.close()
+            ov_png = ov_tmp.name
+            tmp_files.append(ov_png)
+            ov.save(ov_png)
+            filter_complex = (
+                f"[0:v]trim=start={hook_start},setpts=PTS-STARTPTS[trimmed];"
+                f"[trimmed][1:v]overlay=0:0[overlaid];"
+                f"[overlaid]fade=t=out:st={fade_out_start}:d={fade_out_dur}:color=black[v];"
+                f"[0:a]atrim=start={hook_start},asetpts=PTS-STARTPTS,"
+                f"afade=t=out:st={fade_out_start}:d={fade_out_dur}[a]"
+            )
+            cmd_part1 = [
+                'ffmpeg', '-y', '-i', clip_path, '-i', ov_png,
+                '-filter_complex', filter_complex,
+                '-map', '[v]', '-map', '[a]',
+                '-c:v', 'libx264', '-c:a', 'aac', '-preset', 'ultrafast', '-r', '30',
+                part1,
+            ]
+        else:
+            filter_complex = (
+                f"[0:v]trim=start={hook_start},setpts=PTS-STARTPTS,"
+                f"fade=t=out:st={fade_out_start}:d={fade_out_dur}:color=black[v];"
+                f"[0:a]atrim=start={hook_start},asetpts=PTS-STARTPTS,"
+                f"afade=t=out:st={fade_out_start}:d={fade_out_dur}[a]"
+            )
+            cmd_part1 = [
+                'ffmpeg', '-y', '-i', clip_path,
+                '-filter_complex', filter_complex,
+                '-map', '[v]', '-map', '[a]',
+                '-c:v', 'libx264', '-c:a', 'aac', '-preset', 'ultrafast', '-r', '30',
+                part1,
+            ]
+
+        if not _run(cmd_part1, "fade out", log_fn):
+            return False
+
+        # Part 2: black card with white text, fade in
+        log_fn(f"🎨  Creating text card: '{fade_text}'...")
+        text_png = _tmp('.png')
+        img  = Image.new('RGBA', (clip_w, clip_h), (0, 0, 0, 255))
+        draw = ImageDraw.Draw(img)
+        _draw_bar_text(draw, fade_text.upper(), clip_w, 0, clip_h, max_size=80)
+        img.save(text_png)
+
+        part2 = _tmp()
+        if not _run([
+            'ffmpeg', '-y',
+            '-loop', '1', '-i', text_png,
+            '-f', 'lavfi', '-i', 'anullsrc=r=44100:cl=stereo',
+            '-t', str(card_dur),
+            '-vf', f'fade=t=in:st=0:d={fade_in_dur}',
+            '-c:v', 'libx264', '-c:a', 'aac', '-preset', 'ultrafast',
+            '-pix_fmt', 'yuv420p', '-shortest', '-r', '30',
+            part2,
+        ], "text card", log_fn):
+            return False
+
+        # Concat
+        log_fn("🔗  Joining parts...")
+        concat_f = tempfile.NamedTemporaryFile(suffix='.txt', delete=False, mode='w', encoding='utf-8')
+        concat_f.write(f"file '{part1}'\n")
+        concat_f.write(f"file '{part2}'\n")
+        concat_path = concat_f.name
+        concat_f.close()
+        tmp_files.append(concat_path)
+
+        if not _run([
+            'ffmpeg', '-y',
+            '-f', 'concat', '-safe', '0', '-i', concat_path,
+            '-c:v', 'libx264', '-c:a', 'aac', '-preset', 'ultrafast',
+            output_path,
+        ], "concat", log_fn):
+            return False
+
+        log_fn("✅  Fade to text complete!")
+        return True
+
+    except Exception as e:
+        log_fn(f"❌  {e}")
+        return False
+    finally:
+        for f in tmp_files:
+            try:
+                os.unlink(f)
+            except Exception:
+                pass
 
 
 def render_dankify(clip_path, hook_start, output_path, log_fn=print):
