@@ -1,0 +1,399 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>HypeBot — Hype Reel</title>
+  <style>
+    :root {
+      --bg:      #0e0e0e;
+      --surface: #1a1a1a;
+      --border:  #2e2e2e;
+      --fg:      #f0f0f0;
+      --muted:   #666;
+      --accent:  #e8ff00;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { background: var(--bg); color: var(--fg); font-family: 'Arial', sans-serif; font-size: 13px; padding: 32px 24px; max-width: 860px; margin: 0 auto; }
+    h1 { font-size: 18px; letter-spacing: 2px; text-transform: uppercase; margin-bottom: 4px; }
+    .subtitle { font-size: 11px; color: var(--muted); letter-spacing: 0.1em; margin-bottom: 28px; }
+    .back { color: var(--muted); font-size: 11px; margin-bottom: 28px; display: block; text-decoration: none; }
+    .back:hover { color: var(--fg); }
+    .section { background: var(--surface); border: 1px solid var(--border); border-radius: 4px; padding: 20px; margin-bottom: 16px; }
+    .section-title { font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: var(--muted); margin-bottom: 14px; }
+    .row { display: flex; gap: 12px; margin-bottom: 12px; align-items: flex-end; }
+    .row:last-child { margin-bottom: 0; }
+    .field { display: flex; flex-direction: column; gap: 5px; flex: 1; }
+    .field label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; }
+    .field input, .field select {
+      background: var(--bg); border: 1px solid var(--border); color: var(--fg);
+      padding: 8px 10px; font-size: 13px; border-radius: 2px; width: 100%;
+      outline: none; transition: border-color 0.15s;
+    }
+    .field input:focus, .field select:focus { border-color: var(--accent); }
+    .field select option { background: var(--bg); }
+    .field.narrow  { max-width: 110px; }
+    .field.narrow2 { max-width: 160px; }
+
+    /* slots */
+    .slot { border: 1px solid var(--border); border-radius: 3px; padding: 16px; margin-bottom: 12px; background: var(--bg); }
+    .slot:last-child { margin-bottom: 0; }
+    .slot-header { font-size: 10px; letter-spacing: 1.5px; text-transform: uppercase; color: var(--accent); margin-bottom: 12px; }
+
+    /* render */
+    .render-btn {
+      background: var(--accent); color: #000; border: none; padding: 12px 32px;
+      font-size: 13px; font-weight: bold; letter-spacing: 2px; text-transform: uppercase;
+      cursor: pointer; border-radius: 2px; width: 100%; margin-top: 8px;
+    }
+    .render-btn:hover { background: #fff; }
+    .render-btn:disabled { background: var(--border); color: var(--muted); cursor: not-allowed; }
+
+    /* log */
+    .log-label { font-size: 10px; text-transform: uppercase; letter-spacing: 1px; color: var(--muted); margin: 20px 0 6px; }
+    .log-box { background: #000; border: 1px solid var(--border); border-radius: 2px; padding: 12px; height: 200px; overflow-y: auto; font-size: 11px; font-family: monospace; line-height: 1.6; }
+    .log-line.error { color: #ff6b6b; }
+    .done-banner { background: #1a2e1a; border: 1px solid #2e4a2e; color: #7fff7f; padding: 12px 16px; border-radius: 2px; margin-top: 12px; display: none; font-size: 12px; }
+    .result-wrap { margin-top: 20px; display: none; }
+    .result-wrap .result-label { font-size: 10px; letter-spacing: 1.5px; text-transform: uppercase; color: var(--muted); margin-bottom: 10px; }
+    .result-wrap video { width: 100%; border-radius: 2px; border: 1px solid var(--border); display: block; }
+  </style>
+</head>
+<body>
+  <h1>Hype Reel Builder</h1>
+  <p class="subtitle">16:9 monthly highlight — clip 1 hook → SoCal title card → montage</p>
+  <a class="back" href="/">← Back to HypeBot</a>
+
+  <!-- Source folder -->
+  <div class="section">
+    <div class="section-title">Source folder</div>
+    <div class="field">
+      <label>Folder (clips/[folder]/original/)</label>
+      <select id="sessionSel" onchange="onSessionChange()">
+        <option value="">— select folder —</option>
+      </select>
+    </div>
+  </div>
+
+  <!-- Clips -->
+  <div class="section">
+    <div class="section-title">Clips</div>
+    <div class="row">
+      <div class="field narrow">
+        <label>Number of clips</label>
+        <input id="clipCount" type="number" value="2" min="2" max="25" step="1" oninput="onCountChange()">
+      </div>
+      <div class="field narrow2">
+        <label>Global transition</label>
+        <select id="transitionSel" onchange="onGlobalTransitionChange(); saveState();">
+          <option value="flash" selected>Flash to White</option>
+          <option value="cut">Cut (instant)</option>
+          <option value="fade">Fade to Black</option>
+          <option value="crossfade">Crossfade (dissolve)</option>
+          <option value="radial">Clock Wipe</option>
+          <option value="zoomin">Zoom + Fade</option>
+          <option value="pixelize">Pixelize</option>
+          <option value="slideleft">Slide</option>
+          <option value="squeezeh">Squeeze</option>
+        </select>
+      </div>
+    </div>
+    <div id="slotsContainer"></div>
+  </div>
+
+  <!-- Title card -->
+  <div class="section">
+    <div class="section-title">Title card (appears after clip 1)</div>
+    <div class="row">
+      <div class="field">
+        <label>Title text</label>
+        <input id="titleText" type="text" value="SoCal is Hype Vol 1" oninput="saveState()">
+      </div>
+    </div>
+    <div class="row">
+      <div class="field">
+        <label>Logo (optional PNG)</label>
+        <div style="display:flex; gap:6px;">
+          <input id="logoPath" type="text" placeholder="No logo — click Browse" readonly style="flex:1; cursor:default;">
+          <button onclick="browseLogo()" style="background:var(--bg);border:1px solid var(--border);color:var(--fg);padding:0 12px;cursor:pointer;border-radius:2px;white-space:nowrap;font-size:12px;">Browse</button>
+          <button onclick="clearLogo()" style="background:var(--bg);border:1px solid var(--border);color:var(--muted);padding:0 10px;cursor:pointer;border-radius:2px;font-size:12px;">✕</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <button class="render-btn" id="renderBtn" onclick="startHypeReel()">RENDER HYPE REEL</button>
+
+  <div class="log-label">Log</div>
+  <div class="log-box" id="logBox"></div>
+  <div class="done-banner" id="doneBanner">✅ &nbsp; Hype reel complete</div>
+
+  <div class="result-wrap" id="resultWrap">
+    <div class="result-label">Result</div>
+    <video id="resultVideo" controls preload="auto"></video>
+  </div>
+
+<script>
+  let evtSource    = null;
+  let sessionClips = [];  // [{filename, name}]
+
+  function storeKey() {
+    const s = document.getElementById('sessionSel').value;
+    return s ? `hype_reel__${s}` : null;
+  }
+
+  const TRANSITION_OPTS = [
+    ['flash',      'Flash to White'],
+    ['cut',        'Cut (instant)'],
+    ['fade',       'Fade to Black'],
+    ['crossfade',  'Crossfade (dissolve)'],
+    ['radial',     'Clock Wipe'],
+    ['zoomin',     'Zoom + Fade'],
+    ['pixelize',   'Pixelize'],
+    ['slideleft',  'Slide'],
+    ['squeezeh',   'Squeeze'],
+  ];
+
+  function trOptsHtml(selected) {
+    return TRANSITION_OPTS.map(([v, l]) =>
+      `<option value="${v}"${v === selected ? ' selected' : ''}>${l}</option>`
+    ).join('');
+  }
+
+  // ── init ─────────────────────────────────────────────────────────────────────
+
+  async function loadSessions() {
+    const res  = await fetch('/clips-list');
+    const data = await res.json();
+    const sel  = document.getElementById('sessionSel');
+    (data.sessions || []).forEach(s => {
+      const o = document.createElement('option');
+      o.value = s.title;
+      o.textContent = s.title;
+      sel.appendChild(o);
+    });
+    buildSlots(parseInt(document.getElementById('clipCount').value, 10));
+  }
+
+  // ── state ─────────────────────────────────────────────────────────────────────
+
+  function loadStateForSession(session) {
+    try { return JSON.parse(localStorage.getItem(`hype_reel__${session}`) || 'null'); } catch { return null; }
+  }
+
+  function saveState() {
+    const key = storeKey();
+    if (!key) return;
+    const slots = [];
+    document.querySelectorAll('.slot').forEach(slot => {
+      const trSel = slot.querySelector('.tr-sel');
+      slots.push({
+        clip:        slot.querySelector('.clip-sel').value,
+        hook_offset: parseFloat(slot.querySelector('.hook-in').value) || 5,
+        transition:  trSel ? trSel.value : '',
+      });
+    });
+    localStorage.setItem(key, JSON.stringify({
+      clip_count:        parseInt(document.getElementById('clipCount').value, 10) || 2,
+      global_transition: document.getElementById('transitionSel').value,
+      title_text:        document.getElementById('titleText').value.trim(),
+      logo_path:         document.getElementById('logoPath').value.trim(),
+      slots,
+    }));
+  }
+
+  // ── session change ────────────────────────────────────────────────────────────
+
+  async function onSessionChange() {
+    const session = document.getElementById('sessionSel').value;
+    sessionClips  = [];
+    if (!session) { repopulateAllDropdowns(); return; }
+
+    const res  = await fetch(`/original-clips/${encodeURIComponent(session)}`);
+    const data = await res.json();
+    sessionClips = data.clips || [];
+
+    // Restore saved state for this folder, or use current UI values
+    const saved = loadStateForSession(session);
+    if (saved) {
+      if (saved.clip_count)        document.getElementById('clipCount').value        = saved.clip_count;
+      if (saved.global_transition) document.getElementById('transitionSel').value    = saved.global_transition;
+      if (saved.title_text)        document.getElementById('titleText').value         = saved.title_text;
+      if (saved.logo_path)         document.getElementById('logoPath').value           = saved.logo_path;
+    }
+
+    const n = parseInt(document.getElementById('clipCount').value, 10) || 2;
+    buildSlots(n);
+    repopulateAllDropdowns();
+
+    if (saved && saved.slots) {
+      const slotEls = document.querySelectorAll('.slot');
+      saved.slots.forEach((s, i) => {
+        if (!slotEls[i] || !s.clip) return;
+        slotEls[i].querySelector('.clip-sel').value = s.clip;
+        slotEls[i].querySelector('.hook-in').value  = s.hook_offset || 5;
+        const trSel = slotEls[i].querySelector('.tr-sel');
+        if (trSel && s.transition) trSel.value = s.transition;
+      });
+    }
+  }
+
+  // ── slot management ───────────────────────────────────────────────────────────
+
+  function onCountChange() {
+    const n = Math.max(2, Math.min(25, parseInt(document.getElementById('clipCount').value, 10) || 2));
+    document.getElementById('clipCount').value = n;
+    buildSlots(n);
+    saveState();
+  }
+
+  function onGlobalTransitionChange() {
+    const val = document.getElementById('transitionSel').value;
+    document.querySelectorAll('.slot .tr-sel').forEach(sel => { sel.value = val; });
+  }
+
+  function buildSlots(n) {
+    const container = document.getElementById('slotsContainer');
+    const existing  = container.querySelectorAll('.slot');
+    for (let i = existing.length + 1; i <= n; i++) container.appendChild(makeSlot(i));
+    const all = container.querySelectorAll('.slot');
+    for (let i = all.length; i > n; i--) container.removeChild(all[i - 1]);
+  }
+
+  function makeSlot(idx) {
+    const slot = document.createElement('div');
+    slot.className = 'slot';
+    slot.dataset.idx = idx;
+
+    const globalTr = document.getElementById('transitionSel')?.value || 'flash';
+    const trRow = idx > 1 ? `
+      <div style="margin-bottom:12px;">
+        <div class="field narrow2">
+          <label>Transition in</label>
+          <select class="tr-sel" onchange="saveState()">${trOptsHtml(globalTr)}</select>
+        </div>
+      </div>` : '';
+
+    slot.innerHTML = `
+      <div class="slot-header">Clip ${idx}${idx === 1 ? ' — opening' : ''}</div>
+      ${trRow}
+      <div class="row">
+        <div class="field">
+          <label>Clip</label>
+          <select class="clip-sel" onchange="saveState()">
+            <option value="">— select clip —</option>
+          </select>
+        </div>
+        <div class="field narrow">
+          <label>KO Hook (s)</label>
+          <input class="hook-in" type="number" value="5" min="0.5" max="30" step="0.5" oninput="saveState()">
+        </div>
+      </div>
+    `;
+
+    populateClipDropdown(slot.querySelector('.clip-sel'));
+    return slot;
+  }
+
+  function populateClipDropdown(sel) {
+    const current = sel.value;
+    sel.innerHTML = '<option value="">— select clip —</option>';
+    sessionClips.forEach(c => {
+      const o = document.createElement('option');
+      o.value = c.filename;
+      o.textContent = c.name;
+      if (c.filename === current) o.selected = true;
+      sel.appendChild(o);
+    });
+  }
+
+  function repopulateAllDropdowns() {
+    document.querySelectorAll('.slot .clip-sel').forEach(sel => populateClipDropdown(sel));
+  }
+
+  // ── render ────────────────────────────────────────────────────────────────────
+
+  function startHypeReel() {
+    const session   = document.getElementById('sessionSel').value;
+    const titleText = document.getElementById('titleText').value.trim();
+    const logoPath  = document.getElementById('logoPath').value.trim();
+
+    if (!session) { alert('Select a source folder first.'); return; }
+
+    const clips = [];
+    let valid = true;
+    document.querySelectorAll('.slot').forEach(slot => {
+      const clip = slot.querySelector('.clip-sel').value;
+      if (!clip) { valid = false; return; }
+      const trSel = slot.querySelector('.tr-sel');
+      clips.push({
+        session,
+        clip,
+        hook_offset: parseFloat(slot.querySelector('.hook-in').value) || 5,
+        transition:  trSel ? trSel.value : document.getElementById('transitionSel').value,
+      });
+    });
+
+    if (!valid || clips.length < 2) { alert('Select a clip for every slot.'); return; }
+    if (!titleText) { alert('Enter a title for the title card.'); return; }
+
+    document.getElementById('renderBtn').disabled = true;
+    document.getElementById('doneBanner').style.display  = 'none';
+    document.getElementById('resultWrap').style.display  = 'none';
+    document.getElementById('logBox').innerHTML = '';
+
+    fetch('/run-hype-reel', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title_text: titleText, logo_path: logoPath, clips }),
+    });
+
+    if (evtSource) evtSource.close();
+    evtSource = new EventSource('/logs');
+    evtSource.onmessage = e => {
+      const msg = e.data;
+      if (msg === '__keepalive__') return;
+
+      if (msg.startsWith('__hypereel_done__:')) {
+        const filename = msg.split(':').slice(1).join(':');
+        evtSource.close();
+        document.getElementById('renderBtn').disabled = false;
+        document.getElementById('doneBanner').style.display = 'block';
+        const video = document.getElementById('resultVideo');
+        video.src = `/hype-reels-serve/${encodeURIComponent(filename)}?t=${Date.now()}`;
+        video.load();
+        document.getElementById('resultWrap').style.display = 'block';
+        document.getElementById('resultWrap').scrollIntoView({ behavior: 'smooth' });
+        return;
+      }
+      if (msg === '__hypereel_failed__') {
+        evtSource.close();
+        document.getElementById('renderBtn').disabled = false;
+        return;
+      }
+
+      const logBox = document.getElementById('logBox');
+      const line   = document.createElement('span');
+      line.className = 'log-line' + (msg.includes('❌') || msg.includes('⚠️') ? ' error' : '');
+      line.textContent = msg;
+      logBox.appendChild(line);
+      logBox.appendChild(document.createElement('br'));
+      logBox.scrollTop = logBox.scrollHeight;
+    };
+  }
+
+  async function browseLogo() {
+    const res  = await fetch('/browse-image');
+    const data = await res.json();
+    if (data.path) { document.getElementById('logoPath').value = data.path; saveState(); }
+  }
+
+  function clearLogo() {
+    document.getElementById('logoPath').value = '';
+    saveState();
+  }
+
+  loadSessions();
+</script>
+</body>
+</html>

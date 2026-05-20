@@ -10,7 +10,7 @@ import queue
 import subprocess
 import yt_dlp
 from detector import detect_ko_events, cut_clips, cut_extended_vertical, cut_manual_clip
-from renderer import render_with_text, render_stitch, render_replay, render_montage, render_dankify, render_fade_to_text
+from renderer import render_with_text, render_stitch, render_replay, render_montage, render_dankify, render_fade_to_text, render_hype_reel
 
 app = Flask(__name__)
 log_queue = queue.Queue()
@@ -715,6 +715,73 @@ def safe_folder_name(title):
 
 
 # ── Archive ───────────────────────────────────────────────────────────────────
+
+@app.route("/hype-reel")
+def hype_reel_page():
+    return render_template("hypereel.html")
+
+
+@app.route("/original-clips/<path:session>")
+def original_clips(session):
+    clips_root = os.path.abspath("clips")
+    orig_dir   = os.path.join(clips_root, session, "original")
+    clips = []
+    if os.path.exists(orig_dir):
+        for f in sorted(os.listdir(orig_dir), key=_clip_num):
+            if not f.endswith('.mp4'):
+                continue
+            m    = re.search(r'clip_(\d+)_(\d+)m(\d+)s', f)
+            name = f"Game {m.group(1)} · {m.group(2)}:{m.group(3).zfill(2)}" if m else f.replace('_original.mp4', '')
+            clips.append({"filename": f, "name": name})
+    return jsonify({"clips": clips})
+
+
+@app.route("/run-hype-reel", methods=["POST"])
+def run_hype_reel():
+    data       = request.get_json()
+    title_text = data.get("title_text", "SoCal is Hype Vol 1").strip()
+    logo_path  = data.get("logo_path", "").strip() or None
+    clips_data = data.get("clips", [])
+
+    if len(clips_data) < 2:
+        return jsonify({"error": "Need at least 2 clips"}), 400
+
+    clips_root = os.path.abspath("clips")
+    clips_info = []
+    for c in clips_data:
+        session    = c.get("session", "").strip()
+        clip_file  = c.get("clip", "").strip()
+        hook_offset = float(c.get("hook_offset", 5.0))
+        transition  = c.get("transition", "flash").strip()
+        if not session or not clip_file:
+            return jsonify({"error": "Each clip must have session and clip"}), 400
+        clip_path = os.path.join(clips_root, session, "original", clip_file)
+        if not os.path.exists(clip_path):
+            return jsonify({"error": f"Clip not found: {clip_file}"}), 404
+        clips_info.append({"path": clip_path, "hook_offset": hook_offset, "transition": transition})
+
+    out_dir     = os.path.abspath("hype_reels")
+    os.makedirs(out_dir, exist_ok=True)
+    out_name    = f"hype_reel_{int(time.time())}.mp4"
+    output_path = os.path.join(out_dir, out_name)
+
+    def do_hype_reel():
+        ok = render_hype_reel(clips_info, title_text, logo_path, output_path, log_fn=log)
+        if ok:
+            log(f"__hypereel_done__:{out_name}")
+        else:
+            log("__hypereel_failed__")
+
+    threading.Thread(target=do_hype_reel, daemon=True).start()
+    return jsonify({"status": "started"})
+
+
+@app.route("/hype-reels-serve/<path:filename>")
+def serve_hype_reel(filename):
+    resp = send_from_directory(os.path.abspath("hype_reels"), filename)
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
 
 @app.route("/archive")
 def archive_page():

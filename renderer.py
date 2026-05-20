@@ -944,6 +944,157 @@ def _extract(clip_path, ss, duration, vfilter, aspeed, out_path, label, log_fn):
     return _run(cmd, label, log_fn)
 
 
+def render_hype_reel(clips_info, title_text, logo_path, output_path, log_fn=print):
+    """
+    clips_info: list of {path, hook_offset, transition}
+    Structure: clip1 hook + fade to black → title card (logo + text, fade in/out)
+               → clip2..N hooks with transitions between them.
+    """
+    tmp_files = []
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+
+    def _tmp(suffix='.mp4'):
+        p = tempfile.NamedTemporaryFile(suffix=suffix, delete=False).name
+        tmp_files.append(p)
+        return p
+
+    try:
+        cap0   = cv2.VideoCapture(clips_info[0]['path'])
+        reel_w = int(cap0.get(cv2.CAP_PROP_FRAME_WIDTH))
+        reel_h = int(cap0.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        cap0.release()
+
+        # ── 1. Extract hook segments ──────────────────────────────────────────
+        segments = []
+        for i, info in enumerate(clips_info):
+            cap       = cv2.VideoCapture(info['path'])
+            fps       = cap.get(cv2.CAP_PROP_FPS) or 30
+            total_dur = cap.get(cv2.CAP_PROP_FRAME_COUNT) / fps
+            cap.release()
+
+            hook_offset = float(info.get('hook_offset', 5.0))
+            seg_start   = round(max(0.0, total_dur - hook_offset), 3)
+            seg_dur     = round(min(hook_offset, total_dur), 3)
+            seg         = _tmp()
+
+            log_fn(f"✂️  [{i+1}/{len(clips_info)}] {os.path.basename(info['path'])} — last {hook_offset}s")
+            if not _run([
+                'ffmpeg', '-y',
+                '-ss', str(seg_start), '-i', info['path'],
+                '-t', str(seg_dur),
+                '-vf', f'scale={reel_w}:{reel_h}',
+                '-c:v', 'libx264', '-c:a', 'aac', '-preset', 'ultrafast', '-r', '30',
+                seg,
+            ], f"extract clip {i+1}", log_fn):
+                return False
+
+            segments.append({'path': seg, 'duration': seg_dur, 'transition': info.get('transition', 'flash')})
+
+        # ── 2. Fade to black at end of clip 1 ────────────────────────────────
+        log_fn("🎬  Fading opening clip to black...")
+        fade_dur = 1.0
+        fade_st  = round(max(0.0, segments[0]['duration'] - fade_dur), 3)
+        seg1_out = _tmp()
+        if not _run([
+            'ffmpeg', '-y', '-i', segments[0]['path'],
+            '-filter_complex',
+            f"[0:v]fade=t=out:st={fade_st}:d={fade_dur}:color=black[v];"
+            f"[0:a]afade=t=out:st={fade_st}:d={fade_dur}[a]",
+            '-map', '[v]', '-map', '[a]',
+            '-c:v', 'libx264', '-c:a', 'aac', '-preset', 'ultrafast', '-r', '30',
+            seg1_out,
+        ], "clip 1 fadeout", log_fn):
+            return False
+        segments[0]['path'] = seg1_out
+
+        # ── 3. Title card: logo + text, fade in then fade out ─────────────────
+        log_fn(f"🎨  Rendering title card: '{title_text}'...")
+        card_dur = 4.0
+        fi_dur   = 1.0
+        fo_dur   = 1.0
+
+        card_img = Image.new('RGBA', (reel_w, reel_h), (0, 0, 0, 255))
+        draw     = ImageDraw.Draw(card_img)
+
+        text_top = reel_h // 3
+        if logo_path and os.path.exists(logo_path):
+            try:
+                logo     = Image.open(logo_path).convert('RGBA')
+                max_logo_h = int(reel_h * 0.35)
+                scale    = max_logo_h / logo.height
+                logo_w   = int(logo.width * scale)
+                logo     = logo.resize((logo_w, max_logo_h), Image.LANCZOS)
+                logo_x   = (reel_w - logo_w) // 2
+                logo_y   = int(reel_h * 0.18)
+                card_img.paste(logo, (logo_x, logo_y), logo)
+                text_top = logo_y + max_logo_h + 32
+            except Exception as e:
+                log_fn(f"⚠️  Logo load failed: {e}")
+
+        _draw_bar_text(draw, title_text.upper(), reel_w, text_top, reel_h - int(reel_h * 0.08), max_size=80)
+
+        card_png = _tmp('.png')
+        card_img.save(card_png)
+
+        fo_st     = round(card_dur - fo_dur, 3)
+        title_vid = _tmp()
+        if not _run([
+            'ffmpeg', '-y',
+            '-loop', '1', '-i', card_png,
+            '-f', 'lavfi', '-i', 'anullsrc=r=44100:cl=stereo',
+            '-t', str(card_dur),
+            '-vf', f'scale={reel_w}:{reel_h},fade=t=in:st=0:d={fi_dur},fade=t=out:st={fo_st}:d={fo_dur}',
+            '-c:v', 'libx264', '-c:a', 'aac', '-preset', 'ultrafast',
+            '-pix_fmt', 'yuv420p', '-shortest', '-r', '30',
+            title_vid,
+        ], "title card", log_fn):
+            return False
+
+        # ── 4. Join clip 2..N with transitions ────────────────────────────────
+        remaining = segments[1:]
+        if len(remaining) == 0:
+            rest_vid = None
+        elif len(remaining) == 1:
+            rest_vid = remaining[0]['path']
+        else:
+            rest_vid = _tmp()
+            log_fn(f"🔗  Joining {len(remaining)} remaining clips...")
+            if not _concat_segments(remaining, rest_vid, log_fn):
+                return False
+
+        # ── 5. Final assembly ─────────────────────────────────────────────────
+        log_fn("🔗  Assembling final hype reel...")
+        concat_f = tempfile.NamedTemporaryFile(suffix='.txt', delete=False, mode='w', encoding='utf-8')
+        concat_f.write(f"file '{segments[0]['path']}'\n")
+        concat_f.write(f"file '{title_vid}'\n")
+        if rest_vid:
+            concat_f.write(f"file '{rest_vid}'\n")
+        concat_path = concat_f.name
+        concat_f.close()
+        tmp_files.append(concat_path)
+
+        if not _run([
+            'ffmpeg', '-y',
+            '-f', 'concat', '-safe', '0', '-i', concat_path,
+            '-c:v', 'libx264', '-c:a', 'aac', '-preset', 'ultrafast',
+            output_path,
+        ], "final assembly", log_fn):
+            return False
+
+        log_fn("✅  Hype reel complete!")
+        return True
+
+    except Exception as e:
+        log_fn(f"❌  {e}")
+        return False
+    finally:
+        for f in tmp_files:
+            try:
+                os.unlink(f)
+            except Exception:
+                pass
+
+
 def render_fade_to_text(clip_path, hook_offset, fade_text, output_path, log_fn=print, top_text=""):
     """
     Play clip from hook_offset seconds before end → fade to black → white text fades in.
