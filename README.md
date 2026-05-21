@@ -18,6 +18,110 @@ HypeBot downloads Smash Ultimate tournament VODs from YouTube or Twitch, automat
 
 ---
 
+## Quickstart
+
+**No programming experience needed. Follow these steps top to bottom — about 20 minutes the first time, then 10 seconds every time after.**
+
+---
+
+### 1. Install Git &nbsp;*(~2 min)*
+Git is the tool that downloads the HypeBot code from the internet.
+
+1. Go to **[git-scm.com/download/win](https://git-scm.com/download/win)** and download the installer
+2. Run it — click **Next** through every screen, all defaults are fine
+
+---
+
+### 2. Install Python &nbsp;*(~3 min)*
+Python is the language HypeBot is written in.
+
+1. Go to **[python.org/downloads](https://www.python.org/downloads/)** and download **Python 3.13**
+2. Run the installer
+3. ⚠️ **On the first screen, check the box that says "Add Python to PATH"** before clicking anything else. If you skip this, nothing will work.
+4. Click **Install Now**
+
+---
+
+### 3. Install FFmpeg &nbsp;*(~7 min)*
+FFmpeg is the video engine HypeBot uses to cut and encode clips. You'll never open it directly — it runs silently in the background.
+
+1. Go to **[ffmpeg.org/download.html](https://ffmpeg.org/download.html)**, click the Windows logo, then click **Windows builds from gyan.dev**
+2. Download **ffmpeg-release-essentials.zip**
+3. Extract the zip — you'll get a folder with a long name like `ffmpeg-7.x-essentials_build`
+4. Rename that folder to `ffmpeg` and move it to `C:\ffmpeg`
+5. Now tell Windows where to find it:
+   - Press the **Windows key**, search for **"Edit the system environment variables"**, and open it
+   - Click **Environment Variables** (bottom right of the window)
+   - Under **System variables**, click **Path**, then click **Edit**
+   - Click **New** and type exactly: `C:\ffmpeg\bin`
+   - Click **OK** on all three open dialogs
+6. To confirm it worked: open a new **Command Prompt** (search "cmd" in the Start menu), type `ffmpeg -version`, and press Enter. If you see version information, you're good.
+
+---
+
+### 4. Download HypeBot &nbsp;*(~1 min)*
+
+1. Open **Command Prompt** (search "cmd" in the Start menu)
+2. Choose where HypeBot will live — your Desktop is fine. Type the following, replacing `YourName` with your actual Windows username:
+   ```
+   cd C:\Users\YourName\Desktop
+   ```
+3. Download HypeBot:
+   ```
+   git clone https://github.com/fchebbo/HypeBot.git
+   ```
+4. A folder called `HypeBot` now exists on your Desktop
+
+---
+
+### 5. First-time setup &nbsp;*(~4 min)*
+**You only do this once.**
+
+1. In Command Prompt, move into the HypeBot folder:
+   ```
+   cd HypeBot
+   ```
+2. Create a virtual environment (an isolated Python sandbox just for HypeBot):
+   ```
+   python -m venv .venv
+   ```
+3. Activate it:
+   ```
+   .venv\Scripts\activate
+   ```
+   You'll see `(.venv)` appear at the start of the line — that means it's active.
+4. Install HypeBot's dependencies:
+   ```
+   pip install -r requirements.txt
+   ```
+   A lot of text will scroll by. Wait for it to finish — it takes a minute or two.
+
+---
+
+### 6. Run HypeBot
+
+**Every time you want to use HypeBot:**
+
+1. Open **Command Prompt**
+2. Run these two lines (replace `YourName` with your Windows username):
+   ```
+   cd C:\Users\YourName\Desktop\HypeBot
+   .venv\Scripts\activate
+   ```
+3. Start it:
+   ```
+   python server.py
+   ```
+4. Open your browser and go to **[http://localhost:5000](http://localhost:5000)**
+
+HypeBot is running. To stop it when you're done, click into the Command Prompt window and press **Ctrl + C**.
+
+---
+
+> Steps 1–5 are one-time only. From now on, all you ever need is step 6.
+
+---
+
 ## Table of Contents
 - [How it works](#how-it-works)
 - [Setup — Windows](#setup--windows)
