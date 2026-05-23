@@ -39,6 +39,8 @@
     .slot { border: 1px solid var(--border); border-radius: 3px; padding: 16px; margin-bottom: 12px; background: var(--bg); }
     .slot:last-child { margin-bottom: 0; }
     .slot-header { font-size: 10px; letter-spacing: 1.5px; text-transform: uppercase; color: var(--accent); margin-bottom: 12px; }
+    .preview-wrap { margin-top: 10px; display: none; }
+    .preview-wrap video { width: 100%; max-width: 480px; border-radius: 2px; border: 1px solid var(--border); display: block; }
 
     /* render */
     .render-btn {
@@ -163,13 +165,13 @@
   // ── init ─────────────────────────────────────────────────────────────────────
 
   async function loadSessions() {
-    const res  = await fetch('/clips-list');
+    const res  = await fetch('/sessions-with-originals');
     const data = await res.json();
     const sel  = document.getElementById('sessionSel');
-    (data.sessions || []).forEach(s => {
+    (data.sessions || []).forEach(name => {
       const o = document.createElement('option');
-      o.value = s.title;
-      o.textContent = s.title;
+      o.value = name;
+      o.textContent = name;
       sel.appendChild(o);
     });
     buildSlots(parseInt(document.getElementById('clipCount').value, 10));
@@ -234,6 +236,7 @@
         slotEls[i].querySelector('.hook-in').value  = s.hook_offset || 5;
         const trSel = slotEls[i].querySelector('.tr-sel');
         if (trSel && s.transition) trSel.value = s.transition;
+        updateSlotPreview(parseInt(slotEls[i].dataset.idx, 10));
       });
     }
   }
@@ -280,7 +283,7 @@
       <div class="row">
         <div class="field">
           <label>Clip</label>
-          <select class="clip-sel" onchange="saveState()">
+          <select class="clip-sel" onchange="updateSlotPreview(${idx}); saveState();">
             <option value="">— select clip —</option>
           </select>
         </div>
@@ -288,6 +291,9 @@
           <label>KO Hook (s)</label>
           <input class="hook-in" type="number" value="5" min="0.5" max="30" step="0.5" oninput="saveState()">
         </div>
+      </div>
+      <div class="preview-wrap" id="preview-wrap-${idx}">
+        <video id="preview-${idx}" controls preload="none"></video>
       </div>
     `;
 
@@ -309,6 +315,18 @@
 
   function repopulateAllDropdowns() {
     document.querySelectorAll('.slot .clip-sel').forEach(sel => populateClipDropdown(sel));
+  }
+
+  function updateSlotPreview(idx) {
+    const session  = document.getElementById('sessionSel').value;
+    const slot     = document.querySelector(`.slot[data-idx="${idx}"]`);
+    const filename = slot.querySelector('.clip-sel').value;
+    const wrap     = document.getElementById(`preview-wrap-${idx}`);
+    const video    = document.getElementById(`preview-${idx}`);
+    if (!session || !filename) { wrap.style.display = 'none'; return; }
+    video.src = `/clips-serve/${encodeURIComponent(session)}/original/${encodeURIComponent(filename)}`;
+    video.load();
+    wrap.style.display = 'block';
   }
 
   // ── render ────────────────────────────────────────────────────────────────────

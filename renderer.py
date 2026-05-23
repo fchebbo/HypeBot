@@ -983,7 +983,8 @@ def render_hype_reel(clips_info, title_text, logo_path, output_path, log_fn=prin
                 '-ss', str(seg_start), '-i', info['path'],
                 '-t', str(seg_dur),
                 '-vf', f'scale={reel_w}:{reel_h}',
-                '-c:v', 'libx264', '-c:a', 'aac', '-preset', 'ultrafast', '-r', '30',
+                '-c:v', 'libx264', '-c:a', 'aac', '-ar', '44100', '-ac', '2',
+                '-preset', 'ultrafast', '-r', '30',
                 seg,
             ], f"extract clip {i+1}", log_fn):
                 return False
@@ -1064,18 +1065,21 @@ def render_hype_reel(clips_info, title_text, logo_path, output_path, log_fn=prin
 
         # ── 5. Final assembly ─────────────────────────────────────────────────
         log_fn("🔗  Assembling final hype reel...")
-        concat_f = tempfile.NamedTemporaryFile(suffix='.txt', delete=False, mode='w', encoding='utf-8')
-        concat_f.write(f"file '{segments[0]['path']}'\n")
-        concat_f.write(f"file '{title_vid}'\n")
+        parts = [segments[0]['path'], title_vid]
         if rest_vid:
-            concat_f.write(f"file '{rest_vid}'\n")
-        concat_path = concat_f.name
-        concat_f.close()
-        tmp_files.append(concat_path)
+            parts.append(rest_vid)
+
+        n_parts     = len(parts)
+        input_args  = []
+        for p in parts:
+            input_args += ['-i', p]
+        filter_str  = ''.join(f'[{i}:v][{i}:a]' for i in range(n_parts)) + f'concat=n={n_parts}:v=1:a=1[outv][outa]'
 
         if not _run([
             'ffmpeg', '-y',
-            '-f', 'concat', '-safe', '0', '-i', concat_path,
+        ] + input_args + [
+            '-filter_complex', filter_str,
+            '-map', '[outv]', '-map', '[outa]',
             '-c:v', 'libx264', '-c:a', 'aac', '-preset', 'ultrafast',
             output_path,
         ], "final assembly", log_fn):

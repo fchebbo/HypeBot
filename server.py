@@ -424,6 +424,11 @@ def montage_page():
     return render_template("montage.html")
 
 
+@app.route("/montage-original")
+def montage_original_page():
+    return render_template("montage_original.html")
+
+
 @app.route("/run-montage", methods=["POST"])
 def run_montage():
     data       = request.get_json()
@@ -462,6 +467,47 @@ def run_montage():
             log(f"__montage_done__:{output_rel}")
         else:
             log("__montage_failed__")
+
+    threading.Thread(target=do_montage, daemon=True).start()
+    return jsonify({"status": "started"})
+
+
+@app.route("/run-montage-original", methods=["POST"])
+def run_montage_original():
+    data       = request.get_json()
+    session    = data.get("session", "").strip()
+    top_text   = data.get("top_text", "").strip()
+    transition = data.get("transition", "cut").strip()
+    clips_data = data.get("clips", [])
+
+    if not session or len(clips_data) < 2:
+        return jsonify({"error": "session and at least 2 clips are required"}), 400
+
+    clips_root = os.path.abspath("clips")
+    clips_info = []
+    for c in clips_data:
+        clip_rel    = c.get("clip", "").strip()
+        hook_offset = float(c.get("hook_offset", 5.0))
+        end_early   = float(c.get("end_early", 0.0))
+        if not clip_rel:
+            return jsonify({"error": "Each clip entry must have a clip filename"}), 400
+        clip_path = os.path.join(clips_root, session, "original", clip_rel)
+        if not os.path.exists(clip_path):
+            return jsonify({"error": f"Clip not found: {clip_rel}"}), 404
+        clip_transition = c.get("transition", "").strip() or transition
+        clips_info.append({"path": clip_path, "hook_offset": hook_offset, "end_early": end_early, "transition": clip_transition})
+
+    out_name    = f"montage_{int(time.time())}.mp4"
+    output_dir  = os.path.join(clips_root, session, "montage_original")
+    output_path = os.path.join(output_dir, out_name)
+    output_rel  = f"{session}/montage_original/{out_name}"
+
+    def do_montage():
+        ok = render_montage(clips_info, top_text, transition, output_path, log_fn=log)
+        if ok:
+            log(f"__montage_orig_done__:{output_rel}")
+        else:
+            log("__montage_orig_failed__")
 
     threading.Thread(target=do_montage, daemon=True).start()
     return jsonify({"status": "started"})
@@ -719,6 +765,18 @@ def safe_folder_name(title):
 @app.route("/hype-reel")
 def hype_reel_page():
     return render_template("hypereel.html")
+
+
+@app.route("/sessions-with-originals")
+def sessions_with_originals():
+    clips_root = os.path.abspath("clips")
+    sessions = []
+    if os.path.exists(clips_root):
+        for name in sorted(os.listdir(clips_root)):
+            orig_dir = os.path.join(clips_root, name, "original")
+            if os.path.isdir(orig_dir) and any(f.endswith('.mp4') for f in os.listdir(orig_dir)):
+                sessions.append(name)
+    return jsonify({"sessions": sessions})
 
 
 @app.route("/original-clips/<path:session>")
