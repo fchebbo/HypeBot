@@ -4,6 +4,7 @@
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>HypeBot — Hype Reel</title>
+  <link rel="icon" type="image/png" href="/static/favicon.png"/>
   <style>
     :root {
       --bg:      #0e0e0e;
@@ -124,6 +125,18 @@
     </div>
   </div>
 
+  <!-- Outro -->
+  <div class="section">
+    <div class="section-title">Outro (after last clip)</div>
+    <div class="field">
+      <label>Music (props/music/)</label>
+      <select id="outroMusic" onchange="saveState()">
+        <option value="">— no outro —</option>
+      </select>
+    </div>
+    <p style="font-size:11px;color:var(--muted);margin-top:10px;">8s black screen · logo · Thanks for watching · music fades in/out</p>
+  </div>
+
   <button class="render-btn" id="renderBtn" onclick="startHypeReel()">RENDER HYPE REEL</button>
 
   <div class="log-label">Log</div>
@@ -164,6 +177,18 @@
 
   // ── init ─────────────────────────────────────────────────────────────────────
 
+  async function loadOutroMusic() {
+    const res  = await fetch('/outro-music');
+    const data = await res.json();
+    const sel  = document.getElementById('outroMusic');
+    (data.files || []).forEach(f => {
+      const o = document.createElement('option');
+      o.value = f;
+      o.textContent = f;
+      sel.appendChild(o);
+    });
+  }
+
   async function loadSessions() {
     const res  = await fetch('/sessions-with-originals');
     const data = await res.json();
@@ -188,6 +213,7 @@
     if (!key) return;
     const slots = [];
     document.querySelectorAll('.slot').forEach(slot => {
+      if (slot.style.display === 'none') return;
       const trSel = slot.querySelector('.tr-sel');
       slots.push({
         clip:        slot.querySelector('.clip-sel').value,
@@ -200,6 +226,7 @@
       global_transition: document.getElementById('transitionSel').value,
       title_text:        document.getElementById('titleText').value.trim(),
       logo_path:         document.getElementById('logoPath').value.trim(),
+      outro_music:       document.getElementById('outroMusic').value,
       slots,
     }));
   }
@@ -222,6 +249,7 @@
       if (saved.global_transition) document.getElementById('transitionSel').value    = saved.global_transition;
       if (saved.title_text)        document.getElementById('titleText').value         = saved.title_text;
       if (saved.logo_path)         document.getElementById('logoPath').value           = saved.logo_path;
+      if (saved.outro_music != null) document.getElementById('outroMusic').value       = saved.outro_music;
     }
 
     const n = parseInt(document.getElementById('clipCount').value, 10) || 2;
@@ -259,8 +287,9 @@
     const container = document.getElementById('slotsContainer');
     const existing  = container.querySelectorAll('.slot');
     for (let i = existing.length + 1; i <= n; i++) container.appendChild(makeSlot(i));
-    const all = container.querySelectorAll('.slot');
-    for (let i = all.length; i > n; i--) container.removeChild(all[i - 1]);
+    container.querySelectorAll('.slot').forEach(slot => {
+      slot.style.display = parseInt(slot.dataset.idx, 10) <= n ? '' : 'none';
+    });
   }
 
   function makeSlot(idx) {
@@ -341,6 +370,7 @@
     const clips = [];
     let valid = true;
     document.querySelectorAll('.slot').forEach(slot => {
+      if (slot.style.display === 'none') return;
       const clip = slot.querySelector('.clip-sel').value;
       if (!clip) { valid = false; return; }
       const trSel = slot.querySelector('.tr-sel');
@@ -363,7 +393,12 @@
     fetch('/run-hype-reel', {
       method:  'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ title_text: titleText, logo_path: logoPath, clips }),
+      body: JSON.stringify({
+        title_text:  titleText,
+        logo_path:   logoPath,
+        outro_music: document.getElementById('outroMusic').value,
+        clips,
+      }),
     });
 
     if (evtSource) evtSource.close();
@@ -373,12 +408,12 @@
       if (msg === '__keepalive__') return;
 
       if (msg.startsWith('__hypereel_done__:')) {
-        const filename = msg.split(':').slice(1).join(':');
+        const rel = msg.split(':').slice(1).join(':');
         evtSource.close();
         document.getElementById('renderBtn').disabled = false;
         document.getElementById('doneBanner').style.display = 'block';
         const video = document.getElementById('resultVideo');
-        video.src = `/hype-reels-serve/${encodeURIComponent(filename)}?t=${Date.now()}`;
+        video.src = `/hype-reels-serve/${rel.split('/').map(encodeURIComponent).join('/')}?t=${Date.now()}`;
         video.load();
         document.getElementById('resultWrap').style.display = 'block';
         document.getElementById('resultWrap').scrollIntoView({ behavior: 'smooth' });
@@ -412,6 +447,7 @@
   }
 
   loadSessions();
+  loadOutroMusic();
 </script>
 </body>
 </html>

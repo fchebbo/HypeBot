@@ -269,15 +269,12 @@ def cut_clips(video_path, ko_events, output_dir="clips", log_fn=print):
     src_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     cap.release()
 
-    out_height = src_height
-    out_width = int(src_height * 9 / 16)
-    out_width = out_width if out_width % 2 == 0 else out_width - 1
-    out_height = out_height if out_height % 2 == 0 else out_height - 1
-
-    fg_width = out_width
-    fg_height = int(out_width * src_height / src_width)
-    fg_height = fg_height if fg_height % 2 == 0 else fg_height - 1
-    fg_y = (out_height - fg_height) // 2
+    out_width  = 1080
+    out_height = 1920
+    fg_width   = 1080
+    fg_height  = int(1080 * src_height / src_width)
+    fg_height  = fg_height if fg_height % 2 == 0 else fg_height - 1
+    fg_y       = (out_height - fg_height) // 2
 
     blur_filter = (
         f"[0:v]scale={out_width}:{out_height}:force_original_aspect_ratio=increase,"
@@ -310,9 +307,12 @@ def cut_clips(video_path, ko_events, output_dir="clips", log_fn=print):
             "-i", video_path,
             "-t", str(duration),
             "-filter_complex", blur_filter,
-            "-c:v", "libx264",
-            "-c:a", "aac",
-            "-preset", "ultrafast",
+            "-c:v", "libx264", "-crf", "18",
+            "-profile:v", "high", "-level:v", "4.2",
+            "-g", "30", "-keyint_min", "30",
+            "-preset", "slow", "-pix_fmt", "yuv420p",
+            "-c:a", "aac", "-b:a", "384k", "-ar", "48000",
+            "-movflags", "+faststart",
             vertical_path,
         ]
 
@@ -321,9 +321,12 @@ def cut_clips(video_path, ko_events, output_dir="clips", log_fn=print):
             "-ss", str(start),
             "-i", video_path,
             "-t", str(duration),
-            "-c:v", "libx264",
-            "-c:a", "aac",
-            "-preset", "ultrafast",
+            "-c:v", "libx264", "-crf", "18",
+            "-profile:v", "high", "-level:v", "4.2",
+            "-g", "30", "-keyint_min", "30",
+            "-preset", "slow", "-pix_fmt", "yuv420p",
+            "-c:a", "aac", "-b:a", "384k", "-ar", "48000",
+            "-movflags", "+faststart",
             original_path,
         ]
 
@@ -363,11 +366,10 @@ def cut_manual_clip(video_path, start_sec, end_sec, output_dir, clip_name, log_f
 
     duration = round(end_sec - start_sec, 3)
 
-    out_height = src_height if src_height % 2 == 0 else src_height - 1
-    out_width  = int(src_height * 9 / 16)
-    out_width  = out_width if out_width % 2 == 0 else out_width - 1
-    fg_width   = out_width
-    fg_height  = int(out_width * src_height / src_width)
+    out_width  = 1080
+    out_height = 1920
+    fg_width   = 1080
+    fg_height  = int(1080 * src_height / src_width)
     fg_height  = fg_height if fg_height % 2 == 0 else fg_height - 1
     fg_y       = (out_height - fg_height) // 2
 
@@ -387,6 +389,21 @@ def cut_manual_clip(video_path, start_sec, end_sec, output_dir, clip_name, log_f
     vert_path = os.path.join(vert_dir, f"{clip_name}_vertical.mp4")
     orig_path = os.path.join(orig_dir, f"{clip_name}_original.mp4")
 
+    clips_meta_path = os.path.join(output_dir, "clips_meta.json")
+    clips_meta = {}
+    if os.path.exists(clips_meta_path):
+        try:
+            with open(clips_meta_path) as f:
+                clips_meta = json.load(f)
+        except Exception:
+            pass
+    clips_meta[clip_name] = {"start_sec": start_sec, "end_sec": end_sec}
+    try:
+        with open(clips_meta_path, "w") as f:
+            json.dump(clips_meta, f, indent=2)
+    except Exception as e:
+        log_fn(f"⚠️  Could not save clips_meta: {e}")
+
     log_fn(f"✂️  Manual clip: {_fmt_ts(start_sec)} → {_fmt_ts(end_sec)} ({duration:.1f}s)")
     log_fn(f"🎬  Rendering vertical (9:16)...")
     v_ok = run_ffmpeg([
@@ -394,7 +411,12 @@ def cut_manual_clip(video_path, start_sec, end_sec, output_dir, clip_name, log_f
         "-ss", str(start_sec), "-i", video_path,
         "-t", str(duration),
         "-filter_complex", blur_filter,
-        "-c:v", "libx264", "-c:a", "aac", "-preset", "ultrafast",
+        "-c:v", "libx264", "-b:v", "15M", "-maxrate", "20M", "-bufsize", "30M",
+        "-profile:v", "high", "-level:v", "4.2",
+        "-g", "30", "-keyint_min", "30",
+        "-preset", "slow", "-pix_fmt", "yuv420p",
+        "-c:a", "aac", "-b:a", "384k", "-ar", "48000",
+        "-movflags", "+faststart",
         vert_path,
     ], f"{clip_name}_vertical", log_fn)
     if v_ok:
@@ -410,7 +432,12 @@ def cut_manual_clip(video_path, start_sec, end_sec, output_dir, clip_name, log_f
         "ffmpeg", "-y",
         "-ss", str(start_sec), "-i", video_path,
         "-t", str(duration),
-        "-c:v", "libx264", "-c:a", "aac", "-preset", "ultrafast",
+        "-c:v", "libx264", "-b:v", "15M", "-maxrate", "20M", "-bufsize", "30M",
+        "-profile:v", "high", "-level:v", "4.2",
+        "-g", "30", "-keyint_min", "30",
+        "-preset", "slow", "-pix_fmt", "yuv420p",
+        "-c:a", "aac", "-b:a", "384k", "-ar", "48000",
+        "-movflags", "+faststart",
         orig_path,
     ], f"{clip_name}_original", log_fn)
     if o_ok:
@@ -419,12 +446,45 @@ def cut_manual_clip(video_path, start_sec, end_sec, output_dir, clip_name, log_f
     return v_ok or o_ok
 
 
-def cut_extended_vertical(video_path, ko_timestamp, extend_sec, output_path, log_fn=print):
-    """Cut a single extended vertical clip from the source VOD for the Extend feature.
+def upscale_to_4k(input_path, output_path, log_fn=print):
+    """Upscale a 1080x1920 clip to 2160x3840 — forces YouTube to serve high-quality 1080p."""
+    import shutil
+    import tempfile
+    tmp = tempfile.NamedTemporaryFile(suffix='.mp4', delete=False)
+    tmp_path = tmp.name
+    tmp.close()
+    try:
+        cmd = [
+            'ffmpeg', '-y',
+            '-i', input_path,
+            '-vf', 'scale=2160:3840:flags=lanczos',
+            '-c:v', 'libx264', '-crf', '18', '-preset', 'slow', '-pix_fmt', 'yuv420p',
+            '-c:a', 'copy',
+            '-movflags', '+faststart',
+            tmp_path,
+        ]
+        log_fn("⬆️  Upscaling to 4K (2160×3840)...")
+        ok = run_ffmpeg(cmd, 'upscale_4k', log_fn)
+        if ok:
+            shutil.move(tmp_path, output_path)
+            log_fn("✅  4K upscale done.")
+        return ok
+    except Exception as e:
+        log_fn(f"❌  upscale_to_4k: {e}")
+        return False
+    finally:
+        if os.path.exists(tmp_path):
+            try:
+                os.unlink(tmp_path)
+            except Exception:
+                pass
 
-    Produces the same 9:16 blurred-background format as cut_clips(), but with
-    CLIP_AFTER_SEC + extend_sec of footage after the KO instead of CLIP_AFTER_SEC.
-    Used by the render-text route when extend_sec > 0.
+
+def cut_extended_vertical(video_path, ko_timestamp, extend_sec, output_path, log_fn=print, fg_zoom=1.0, explicit_start=None, base_duration=None):
+    """Cut a single extended/zoomed vertical clip from the source VOD.
+
+    fg_zoom > 1.0 scales the foreground larger and crops to canvas width,
+    showing less of the 16:9 frame but filling more of the 9:16 canvas.
     """
     cap = cv2.VideoCapture(video_path)
     src_width  = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
@@ -435,36 +495,49 @@ def cut_extended_vertical(video_path, ko_timestamp, extend_sec, output_path, log
         log_fn("❌  Could not read VOD dimensions for extended cut.")
         return False
 
-    out_height = src_height if src_height % 2 == 0 else src_height - 1
-    out_width  = int(src_height * 9 / 16)
-    out_width  = out_width if out_width % 2 == 0 else out_width - 1
+    out_width  = 1080
+    out_height = 1920
 
-    fg_width  = out_width
-    fg_height = int(out_width * src_height / src_width)
+    fg_base_h = int(out_width * src_height / src_width)
+    fg_base_h = fg_base_h if fg_base_h % 2 == 0 else fg_base_h - 1
+
+    fg_height = int(fg_base_h * fg_zoom)
     fg_height = fg_height if fg_height % 2 == 0 else fg_height - 1
+    fg_width  = int(fg_height * src_width / src_height)
+    fg_width  = fg_width if fg_width % 2 == 0 else fg_width - 1
     fg_y      = (out_height - fg_height) // 2
+
+    if fg_zoom > 1.0:
+        crop_x    = (fg_width - out_width) // 2
+        fg_filter = f"[0:v]scale={fg_width}:{fg_height},crop={out_width}:{fg_height}:{crop_x}:0[fg]"
+    else:
+        fg_filter = f"[0:v]scale={fg_width}:{fg_height}[fg]"
 
     blur_filter = (
         f"[0:v]scale={out_width}:{out_height}:force_original_aspect_ratio=increase,"
         f"crop={out_width}:{out_height},"
         f"boxblur={BLUR_STRENGTH}:{BLUR_STRENGTH}[bg];"
-        f"[0:v]scale={fg_width}:{fg_height}[fg];"
+        f"{fg_filter};"
         f"[bg][fg]overlay=0:{fg_y}"
     )
 
-    start    = max(0, ko_timestamp - CLIP_BEFORE_SEC)
-    duration = CLIP_BEFORE_SEC + CLIP_AFTER_SEC + extend_sec
+    if explicit_start is not None:
+        start    = explicit_start
+        duration = (base_duration or (CLIP_BEFORE_SEC + CLIP_AFTER_SEC)) + extend_sec
+    else:
+        start    = max(0, ko_timestamp - CLIP_BEFORE_SEC)
+        duration = CLIP_BEFORE_SEC + CLIP_AFTER_SEC + extend_sec
 
-    log_fn(f"⏱️  Extend: cutting +{extend_sec}s from VOD (total {duration}s)...")
+    zoom_note = f"  zoom={fg_zoom}x" if fg_zoom > 1.0 else ""
+    log_fn(f"⏱️  Cutting {duration}s from VOD...{zoom_note}")
     cmd = [
         "ffmpeg", "-y",
         "-ss", str(start),
         "-i", video_path,
         "-t", str(duration),
         "-filter_complex", blur_filter,
-        "-c:v", "libx264",
-        "-c:a", "aac",
-        "-preset", "ultrafast",
+        "-c:v", "libx264", "-crf", "18", "-preset", "slow", "-pix_fmt", "yuv420p",
+        "-c:a", "aac", "-b:a", "192k",
         output_path,
     ]
     return run_ffmpeg(cmd, "extended_vertical", log_fn)

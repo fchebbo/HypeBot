@@ -511,6 +511,7 @@
       padding: 8px 10px;
       border-radius: 2px;
       width: 100%;
+      height: 130px;
       resize: none;
       cursor: pointer;
       outline: none;
@@ -676,6 +677,7 @@
       <a class="nav-tool" href="/stitch">Stitch</a>
       <a class="nav-tool" href="/montage">Montage</a>
       <a class="nav-tool" href="/montage-original">Montage OG</a>
+      <a class="nav-tool" href="/beat-sync">Beat Sync</a>
       <a class="nav-tool" href="/dankify">Dankify</a>
       <a class="nav-tool" href="/archive">Archive</a>
       <a class="nav-tool" href="/fadetotext">Fade to Text</a>
@@ -1028,11 +1030,12 @@
 
     const meta = session && session.meta;
     if (meta && (meta.venue || meta.source)) {
-      const CTA = 'Got a local with highlight-worthy sets? Send me the full event VOD and I\'ll find and clip the best moments — pre-made clips welcome too. New videos every day.';
+      const CTA = 'Got a local with highlight-worthy sets? Send me the full event VOD and I\'ll find and clip the best moments - pre-made clips welcome too. New videos every day.';
+      const SUB = 'Subscribe to help channel growth ❤️ - new clips posted daily!';
       const lines = [];
       if (meta.venue)  lines.push(`Venue: ${meta.venue}`);
       if (meta.source) lines.push('', `Source: ${meta.source}`);
-      lines.push('', CTA);
+      lines.push('', CTA, '', SUB);
       const text = lines.join('\n');
       metaBar.innerHTML = `<textarea readonly onclick="this.select()" title="Click to select all">${text}</textarea>`;
       metaBar.style.display = 'block';
@@ -1376,6 +1379,7 @@
             extend_sec:      parseFloat(extendInput.value) || 0,
             cut_end_sec:     parseFloat(cutInput.value) || 0,
             normalize_audio: normCheck.checked,
+            zoom:            zoomCheck.checked,
           }),
         });
         const data = await res.json();
@@ -1408,6 +1412,19 @@
     textPanel.appendChild(extendRow);
     textPanel.appendChild(cutRow);
     textPanel.appendChild(normRow);
+
+    const zoomRow = document.createElement('div');
+    zoomRow.className = 'hook-row';
+    const zoomCheck = document.createElement('input');
+    zoomCheck.type = 'checkbox';
+    zoomCheck.id = `zoom-${clip.name}`;
+    const zoomLabel = document.createElement('label');
+    zoomLabel.htmlFor = `zoom-${clip.name}`;
+    zoomLabel.textContent = 'Zoom in 1.5× (re-cuts from VOD)';
+    zoomRow.appendChild(zoomCheck);
+    zoomRow.appendChild(zoomLabel);
+    textPanel.appendChild(zoomRow);
+
     textPanel.appendChild(aboveInput);
     textPanel.appendChild(belowInput);
     textPanel.appendChild(renderBtn);

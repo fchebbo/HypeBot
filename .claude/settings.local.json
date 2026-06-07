@@ -2,7 +2,15 @@
   "permissions": {
     "allow": [
       "Bash(dir \"C:\\\\Users\\\\chebb\\\\PycharmProjects\")",
-      "Bash(dir *)"
+      "Bash(dir *)",
+      "Bash(/c/ffmpeg-master-latest-win64-gpl-shared/bin/ffmpeg -ss 11 -i \"/c/Users/chebb/PycharmProjects/HypeBot/clips/Socal-Vol-1/original/Amazing Steal.mp4\" -vframes 1 -update 1 \"/c/Users/chebb/PycharmProjects/HypeBot/clips/Socal-Vol-1/Amazing Steal_11s.png\" -y)",
+      "Bash(python3 *)",
+      "Bash(python *)",
+      "Read(//c/Users/chebb/AppData/Local/Programs/Python//**)",
+      "Bash(ls /c/Python*)",
+      "Bash(py -c ' *)",
+      "Bash(.venv/Scripts/python -c ' *)",
+      "WebSearch"
     ]
   }
 }

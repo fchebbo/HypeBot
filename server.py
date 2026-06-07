@@ -10,7 +10,7 @@ import queue
 import subprocess
 import yt_dlp
 from detector import detect_ko_events, cut_clips, cut_extended_vertical, cut_manual_clip
-from renderer import render_with_text, render_stitch, render_replay, render_montage, render_dankify, render_fade_to_text, render_hype_reel
+from renderer import render_with_text, render_stitch, render_replay, render_montage, render_dankify, render_fade_to_text, render_hype_reel, render_beat_sync
 
 app = Flask(__name__)
 log_queue = queue.Queue()
@@ -216,6 +216,8 @@ def render_text_route():
     cut_end_sec     = float(data.get("cut_end_sec", 0.0))
     extend_sec      = float(data.get("extend_sec", 0.0))
     normalize_audio = bool(data.get("normalize_audio", False))
+    zoom            = bool(data.get("zoom", False))
+    FG_ZOOM         = 1.5
 
     if not clip_rel:
         return jsonify({"error": "No clip specified"}), 400
@@ -244,7 +246,7 @@ def render_text_route():
     render_source = clip_path
     tmp_extended  = None
 
-    if extend_sec > 0:
+    if extend_sec > 0 or zoom:
         meta_path = os.path.join(clips_root, session, "meta.json")
         ko_ts     = _parse_ko_ts_from_filename(orig_name)
         vod_path  = None
@@ -253,18 +255,44 @@ def render_text_route():
                 meta = json.load(f)
             vod_path = meta.get("vod_path")
 
-        if vod_path and os.path.exists(vod_path) and ko_ts is not None:
-            tmp_extended  = tempfile.NamedTemporaryFile(suffix=".mp4", delete=False).name
-            ok_cut = cut_extended_vertical(vod_path, ko_ts, extend_sec, tmp_extended, log_fn=capture)
+        explicit_start    = None
+        explicit_base_dur = None
+        if ko_ts is None:
+            clip_base      = orig_name.replace("_vertical.mp4", "")
+            clips_meta_path = os.path.join(clips_root, session, "clips_meta.json")
+            if os.path.exists(clips_meta_path):
+                try:
+                    with open(clips_meta_path) as f:
+                        clips_meta = json.load(f)
+                    entry = clips_meta.get(clip_base)
+                    if entry:
+                        explicit_start    = entry["start_sec"]
+                        explicit_base_dur = entry["end_sec"] - entry["start_sec"]
+                except Exception:
+                    pass
+
+        can_cut = vod_path and os.path.exists(vod_path) and (ko_ts is not None or explicit_start is not None)
+        if can_cut:
+            tmp_extended = tempfile.NamedTemporaryFile(suffix=".mp4", delete=False).name
+            ok_cut = cut_extended_vertical(
+                vod_path, ko_ts, extend_sec, tmp_extended,
+                log_fn=capture,
+                fg_zoom=FG_ZOOM if zoom else 1.0,
+                explicit_start=explicit_start,
+                base_duration=explicit_base_dur,
+            )
             if ok_cut:
                 render_source = tmp_extended
             else:
-                capture("⚠️  Extended cut failed — rendering standard 13s clip.")
+                capture("⚠️  Cut failed — using standard clip.")
         else:
-            capture("⚠️  VOD not found for extend — rendering standard 13s clip.")
+            if not vod_path or not os.path.exists(vod_path or ""):
+                capture("⚠️  VOD not found — zoom/extend unavailable for this session.")
+            else:
+                capture("⚠️  No timestamp found for this clip — re-cut it via Manual Cut to enable zoom/extend.")
 
     try:
-        ok = render_with_text(render_source, above, below, output_path, log_fn=capture, hook=hook, hook_offset=hook_offset, normalize_audio=normalize_audio, hook_transition=hook_transition, cut_end_sec=cut_end_sec, hook_only=hook_only)
+        ok = render_with_text(render_source, above, below, output_path, log_fn=capture, hook=hook, hook_offset=hook_offset, normalize_audio=normalize_audio, hook_transition=hook_transition, cut_end_sec=cut_end_sec, hook_only=hook_only, fg_zoom=FG_ZOOM if zoom else 1.0)
     finally:
         if tmp_extended and os.path.exists(tmp_extended):
             try:
@@ -767,6 +795,17 @@ def hype_reel_page():
     return render_template("hypereel.html")
 
 
+@app.route("/outro-music")
+def outro_music():
+    music_dir = os.path.join(os.path.abspath("props"), "music")
+    files = []
+    if os.path.exists(music_dir):
+        for f in sorted(os.listdir(music_dir)):
+            if f.lower().endswith(('.mp3', '.wav', '.ogg', '.m4a', '.aac', '.flac', '.mp4')):
+                files.append(f)
+    return jsonify({"files": files})
+
+
 @app.route("/sessions-with-originals")
 def sessions_with_originals():
     clips_root = os.path.abspath("clips")
@@ -796,10 +835,16 @@ def original_clips(session):
 
 @app.route("/run-hype-reel", methods=["POST"])
 def run_hype_reel():
-    data       = request.get_json()
-    title_text = data.get("title_text", "SoCal is Hype Vol 1").strip()
-    logo_path  = data.get("logo_path", "").strip() or None
-    clips_data = data.get("clips", [])
+    data        = request.get_json()
+    title_text  = data.get("title_text", "SoCal is Hype Vol 1").strip()
+    logo_path   = data.get("logo_path", "").strip() or None
+    clips_data  = data.get("clips", [])
+    outro_music = data.get("outro_music", "").strip() or None
+    outro_music_path = None
+    if outro_music:
+        candidate = os.path.join(os.path.abspath("props"), "music", outro_music)
+        if os.path.exists(candidate):
+            outro_music_path = candidate
 
     if len(clips_data) < 2:
         return jsonify({"error": "Need at least 2 clips"}), 400
@@ -818,15 +863,17 @@ def run_hype_reel():
             return jsonify({"error": f"Clip not found: {clip_file}"}), 404
         clips_info.append({"path": clip_path, "hook_offset": hook_offset, "transition": transition})
 
-    out_dir     = os.path.abspath("hype_reels")
+    session    = clips_data[0].get("session", "").strip()
+    out_dir    = os.path.join(os.path.abspath("clips"), session, "hype_reels")
     os.makedirs(out_dir, exist_ok=True)
     out_name    = f"hype_reel_{int(time.time())}.mp4"
     output_path = os.path.join(out_dir, out_name)
+    output_rel  = f"{session}/hype_reels/{out_name}"
 
     def do_hype_reel():
-        ok = render_hype_reel(clips_info, title_text, logo_path, output_path, log_fn=log)
+        ok = render_hype_reel(clips_info, title_text, logo_path, output_path, log_fn=log, outro_music_path=outro_music_path)
         if ok:
-            log(f"__hypereel_done__:{out_name}")
+            log(f"__hypereel_done__:{output_rel}")
         else:
             log("__hypereel_failed__")
 
@@ -836,9 +883,65 @@ def run_hype_reel():
 
 @app.route("/hype-reels-serve/<path:filename>")
 def serve_hype_reel(filename):
-    resp = send_from_directory(os.path.abspath("hype_reels"), filename)
+    resp = send_from_directory(os.path.abspath("clips"), filename)
     resp.headers["Cache-Control"] = "no-store"
     return resp
+
+
+@app.route("/beat-sync")
+def beat_sync_page():
+    return render_template("beat_sync.html")
+
+
+@app.route("/run-beat-sync", methods=["POST"])
+def run_beat_sync():
+    data           = request.get_json()
+    session        = data.get("session", "").strip()
+    clip_file      = data.get("clip", "").strip()
+    audio_file     = data.get("audio", "").strip()
+    hit_times      = [float(t) for t in data.get("hit_times", [])]
+    beat_times     = [float(t) for t in data.get("beat_times", [])]
+    effect         = data.get("effect", "none").strip()
+    flash_delay    = float(data.get("flash_delay", 0.0))
+    context_before = float(data.get("context_before", 3.0))
+    context_after  = float(data.get("context_after", 2.0))
+    logo_path      = os.path.join(os.path.abspath("static"), "favicon.png")
+    black_top_bar  = bool(data.get("black_top_bar", False))
+    top_text       = data.get("top_text", "").strip()
+
+    if not session or not clip_file or not audio_file:
+        return jsonify({"error": "session, clip, and audio required"}), 400
+    if len(hit_times) < 2 or len(beat_times) < 2:
+        return jsonify({"error": "Need at least 2 hit and beat times"}), 400
+
+    clips_root  = os.path.abspath("clips")
+    clip_path   = os.path.join(clips_root, session, "original", clip_file)
+    audio_path  = os.path.join(os.path.abspath("props"), "music", audio_file)
+
+    if not os.path.exists(clip_path):
+        return jsonify({"error": f"Clip not found: {clip_file}"}), 404
+    if not os.path.exists(audio_path):
+        return jsonify({"error": f"Audio not found: {audio_file}"}), 404
+
+    out_dir     = os.path.join(clips_root, session, "beat_sync")
+    os.makedirs(out_dir, exist_ok=True)
+    out_name    = f"beat_sync_{int(time.time())}.mp4"
+    output_path = os.path.join(out_dir, out_name)
+    output_rel  = f"{session}/beat_sync/{out_name}"
+
+    def do_render():
+        ok = render_beat_sync(clip_path, hit_times, beat_times, audio_path, output_path,
+                              effect=effect, flash_delay=flash_delay,
+                              context_before=context_before, context_after=context_after,
+                              logo_path=logo_path, black_top_bar=black_top_bar,
+                              top_text=top_text, log_fn=log)
+        if ok:
+            log(f"__beat_sync_done__:{output_rel}")
+        else:
+            log("__beat_sync_failed__")
+
+    threading.Thread(target=do_render, daemon=True).start()
+    return jsonify({"status": "started"})
 
 
 @app.route("/archive")

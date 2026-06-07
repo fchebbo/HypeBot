@@ -11,6 +11,7 @@ STROKE_WIDTH   = 6
 TEXT_PADDING   = 40   # horizontal margin from canvas edge
 BAR_PADDING    = 28   # vertical margin within each bar
 
+
 _IMPACT = r'C:\Windows\Fonts\impact.ttf'
 _EMOJI  = r'C:\Windows\Fonts\seguiemj.ttf'   # Segoe UI Emoji
 _ARIAL  = r'C:\Windows\Fonts\arialbd.ttf'
@@ -82,9 +83,12 @@ def _wrap_lines(draw, text, max_w, fonts):
     return lines or [text]
 
 
-def _bar_regions(clip_w, clip_h):
+def _bar_regions(clip_w, clip_h, fg_zoom=1.0):
     """Return (top_bar_bottom, bottom_bar_top) for a 9:16 clip from a 16:9 source."""
     fg_h = int(clip_w * 9 / 16)
+    if fg_h % 2 != 0:
+        fg_h -= 1
+    fg_h = int(fg_h * fg_zoom)
     if fg_h % 2 != 0:
         fg_h -= 1
     fg_y = (clip_h - fg_h) // 2
@@ -148,7 +152,7 @@ def _draw_bar_text(draw, text, clip_w, bar_top, bar_bottom, max_size=120, min_si
         y += line_h + line_gap
 
 
-def render_with_text(clip_path, above_text, below_text, output_path, log_fn=print, hook=False, hook_offset=2.8, normalize_audio=False, hook_transition='none', cut_end_sec=0.0, hook_only=False):
+def render_with_text(clip_path, above_text, below_text, output_path, log_fn=print, hook=False, hook_offset=2.8, normalize_audio=False, hook_transition='none', cut_end_sec=0.0, hook_only=False, fg_zoom=1.0):
     cap        = cv2.VideoCapture(clip_path)
     clip_w     = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     clip_h     = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
@@ -161,7 +165,7 @@ def render_with_text(clip_path, above_text, below_text, output_path, log_fn=prin
 
     log_fn(f"🎨  Compositing text onto {clip_w}x{clip_h} canvas...")
 
-    top_bar_bottom, bottom_bar_top = _bar_regions(clip_w, clip_h)
+    top_bar_bottom, bottom_bar_top = _bar_regions(clip_w, clip_h, fg_zoom)
 
     overlay = Image.new('RGBA', (clip_w, clip_h), (0, 0, 0, 0))
     draw    = ImageDraw.Draw(overlay)
@@ -212,9 +216,12 @@ def render_with_text(clip_path, above_text, below_text, output_path, log_fn=prin
             '-filter_complex', filter_complex,
             '-map', '[outv]',
             '-map', audio_map,
-            '-c:v', 'libx264',
-            '-c:a', 'aac',
-            '-preset', 'ultrafast',
+            '-c:v', 'libx264', '-crf', '18',
+            '-profile:v', 'high', '-level:v', '4.2',
+            '-g', '30', '-keyint_min', '30',
+            '-preset', 'slow', '-pix_fmt', 'yuv420p',
+            '-c:a', 'aac', '-b:a', '384k', '-ar', '48000',
+            '-movflags', '+faststart',
             output_path,
         ]
 
@@ -265,9 +272,12 @@ def render_with_text(clip_path, above_text, below_text, output_path, log_fn=prin
             '-filter_complex', filter_complex,
             '-map', '[outv]',
             '-map', '[ca]',
-            '-c:v', 'libx264',
-            '-c:a', 'aac',
-            '-preset', 'ultrafast',
+            '-c:v', 'libx264', '-crf', '18',
+            '-profile:v', 'high', '-level:v', '4.2',
+            '-g', '30', '-keyint_min', '30',
+            '-preset', 'slow', '-pix_fmt', 'yuv420p',
+            '-c:a', 'aac', '-b:a', '384k', '-ar', '48000',
+            '-movflags', '+faststart',
             output_path,
         ]
     else:
@@ -278,10 +288,13 @@ def render_with_text(clip_path, above_text, below_text, output_path, log_fn=prin
             '-i', clip_path,
             '-i', tmp_path,
             '-filter_complex', '[0:v][1:v]overlay=0:0',
-            '-c:v', 'libx264',
+            '-c:v', 'libx264', '-b:v', '15M', '-maxrate', '20M', '-bufsize', '30M',
+            '-profile:v', 'high', '-level:v', '4.2',
+            '-g', '30', '-keyint_min', '30',
+            '-preset', 'slow', '-pix_fmt', 'yuv420p',
             *af_args,
-            '-c:a', 'aac',
-            '-preset', 'ultrafast',
+            '-c:a', 'aac', '-b:a', '384k', '-ar', '48000',
+            '-movflags', '+faststart',
             *t_args,
             output_path,
         ]
@@ -358,7 +371,7 @@ def render_replay(
             f"[0:v]trim=start={hook_start},setpts=PTS-STARTPTS[v];"
             f"[0:a]atrim=start={hook_start},asetpts=PTS-STARTPTS[a]",
             '-map', '[v]', '-map', '[a]',
-            '-c:v', 'libx264', '-c:a', 'aac', '-preset', 'ultrafast', '-r', '30',
+            '-c:v', 'libx264', '-c:a', 'aac', '-b:a', '320k', '-preset', 'ultrafast', '-r', '30',
             trimmed,
         ], "KO hook trim"):
             for f in tmp:
@@ -398,7 +411,7 @@ def render_replay(
             'ffmpeg', '-y',
             '-i', clip_path, '-i', ov_png.name,
             '-filter_complex', '[0:v][1:v]overlay=0:0',
-            '-c:v', 'libx264', '-c:a', 'aac', '-preset', 'ultrafast', '-r', '30',
+            '-c:v', 'libx264', '-c:a', 'aac', '-b:a', '320k', '-preset', 'ultrafast', '-r', '30',
             part1,
         ], "Part 1"): return False
 
@@ -412,7 +425,7 @@ def render_replay(
                 f"[0:v]trim=start=0:end={c4_time},setpts=PTS-STARTPTS[v];"
                 f"[0:a]atrim=start=0:end={c4_time},asetpts=PTS-STARTPTS[a]",
                 '-map', '[v]', '-map', '[a]',
-                '-c:v', 'libx264', '-c:a', 'aac', '-preset', 'ultrafast', '-r', '30',
+                '-c:v', 'libx264', '-c:a', 'aac', '-b:a', '320k', '-preset', 'ultrafast', '-r', '30',
                 segA,
             ], "Seg A"): return False
         else:
@@ -428,7 +441,7 @@ def render_replay(
             f"crop={crop_w}:{crop_h}:{crop_x}:{crop_y},scale={clip_w}:{clip_h}[v];"
             f"[0:a]atrim=start={c4_time}:end={end_b},asetpts=PTS-STARTPTS,atempo={slowmo_factor}[a]",
             '-map', '[v]', '-map', '[a]',
-            '-c:v', 'libx264', '-c:a', 'aac', '-preset', 'ultrafast', '-r', '30',
+            '-c:v', 'libx264', '-c:a', 'aac', '-b:a', '320k', '-preset', 'ultrafast', '-r', '30',
             segB,
         ], "Seg B"): return False
 
@@ -443,7 +456,7 @@ def render_replay(
                 f"[0:v]trim=start={end_b},setpts=PTS-STARTPTS[v];"
                 f"[0:a]atrim=start={end_b},asetpts=PTS-STARTPTS[a]",
                 '-map', '[v]', '-map', '[a]',
-                '-c:v', 'libx264', '-c:a', 'aac', '-preset', 'ultrafast', '-r', '30',
+                '-c:v', 'libx264', '-c:a', 'aac', '-b:a', '320k', '-preset', 'ultrafast', '-r', '30',
                 segC,
             ], "Seg C"): return False
 
@@ -461,7 +474,7 @@ def render_replay(
         if not _run([
             'ffmpeg', '-y',
             '-f', 'concat', '-safe', '0', '-i', concat_path,
-            '-c:v', 'libx264', '-c:a', 'aac', '-preset', 'ultrafast',
+            '-c:v', 'libx264', '-c:a', 'aac', '-b:a', '320k', '-preset', 'ultrafast',
             replay,
         ], "Replay concat"): return False
 
@@ -479,7 +492,7 @@ def render_replay(
                 'ffmpeg', '-y',
                 '-i', replay, '-i', ov2_png.name,
                 '-filter_complex', '[0:v][1:v]overlay=0:0',
-                '-c:v', 'libx264', '-c:a', 'aac', '-preset', 'ultrafast',
+                '-c:v', 'libx264', '-c:a', 'aac', '-b:a', '320k', '-preset', 'ultrafast',
                 replay_with_text,
             ], "Replay text"): return False
             replay = replay_with_text
@@ -499,7 +512,12 @@ def render_replay(
             f"[0:v][1:v]xfade=transition=fade:duration={crossfade_dur}:offset={offset}[v];"
             f"[0:a][1:a]acrossfade=d={crossfade_dur}[a]",
             '-map', '[v]', '-map', '[a]',
-            '-c:v', 'libx264', '-c:a', 'aac', '-preset', 'ultrafast',
+            '-c:v', 'libx264', '-crf', '18',
+            '-profile:v', 'high', '-level:v', '4.2',
+            '-g', '30', '-keyint_min', '30',
+            '-preset', 'slow', '-pix_fmt', 'yuv420p',
+            '-c:a', 'aac', '-b:a', '384k', '-ar', '48000',
+            '-movflags', '+faststart',
             output_path,
         ], "Crossfade"): return False
 
@@ -591,7 +609,7 @@ def render_stitch(
                 '-i', overlay_path,
                 '-filter_complex', fc,
                 '-map', '[v]', '-map', '[ta]',
-                '-c:v', 'libx264', '-c:a', 'aac',
+                '-c:v', 'libx264', '-c:a', 'aac', '-b:a', '320k',
                 '-preset', 'ultrafast', '-r', '30',
                 t.name,
             ]
@@ -615,7 +633,7 @@ def render_stitch(
             '-loop', '1', '-i', card,
             '-f', 'lavfi', '-i', 'anullsrc=r=44100:cl=stereo',
             '-t', '1', '-r', '30',
-            '-c:v', 'libx264', '-c:a', 'aac',
+            '-c:v', 'libx264', '-c:a', 'aac', '-b:a', '320k',
             '-preset', 'ultrafast', '-pix_fmt', 'yuv420p',
             '-shortest',
             tc.name,
@@ -644,7 +662,12 @@ def render_stitch(
         cmd_cat = [
             'ffmpeg', '-y',
             '-f', 'concat', '-safe', '0', '-i', concat_path,
-            '-c:v', 'libx264', '-c:a', 'aac', '-preset', 'ultrafast',
+            '-c:v', 'libx264', '-crf', '18',
+            '-profile:v', 'high', '-level:v', '4.2',
+            '-g', '30', '-keyint_min', '30',
+            '-preset', 'slow', '-pix_fmt', 'yuv420p',
+            '-c:a', 'aac', '-b:a', '384k', '-ar', '48000',
+            '-movflags', '+faststart',
             output_path,
         ]
         r = subprocess.run(cmd_cat, stdout=subprocess.DEVNULL,
@@ -691,7 +714,7 @@ def _concat_segments(segments, output_path, log_fn):
         cmd = ['ffmpeg', '-y'] + inputs + [
             '-filter_complex', filter_str,
             '-map', '[outv]', '-map', '[outa]',
-            '-c:v', 'libx264', '-c:a', 'aac', '-preset', 'ultrafast',
+            '-c:v', 'libx264', '-c:a', 'aac', '-b:a', '320k', '-preset', 'ultrafast',
             output_path,
         ]
         try:
@@ -731,7 +754,7 @@ def _concat_segments(segments, output_path, log_fn):
                 cmd = [
                     'ffmpeg', '-y',
                     '-f', 'concat', '-safe', '0', '-i', concat_f.name,
-                    '-c:v', 'libx264', '-c:a', 'aac', '-preset', 'ultrafast',
+                    '-c:v', 'libx264', '-c:a', 'aac', '-b:a', '320k', '-preset', 'ultrafast',
                     out_path,
                 ]
                 current_dur = current_dur + seg['duration']
@@ -745,7 +768,7 @@ def _concat_segments(segments, output_path, log_fn):
                     f"[0:v][1:v]xfade=transition={xfade_type}:duration={T}:offset={offset}[v];"
                     f"[0:a][1:a]acrossfade=d={T}[a]",
                     '-map', '[v]', '-map', '[a]',
-                    '-c:v', 'libx264', '-c:a', 'aac', '-preset', 'ultrafast',
+                    '-c:v', 'libx264', '-c:a', 'aac', '-b:a', '320k', '-preset', 'ultrafast',
                     out_path,
                 ]
                 current_dur = current_dur + seg['duration'] - T
@@ -810,7 +833,7 @@ def render_montage(clips_info, top_text, transition, output_path, log_fn=print, 
                 '-ss', str(seg_start),
                 '-i', info['path'],
                 '-t', str(seg_dur),
-                '-c:v', 'libx264', '-c:a', 'aac', '-preset', 'ultrafast',
+                '-c:v', 'libx264', '-c:a', 'aac', '-b:a', '320k', '-preset', 'ultrafast',
                 seg_path,
             ]
             try:
@@ -863,7 +886,7 @@ def render_montage(clips_info, top_text, transition, output_path, log_fn=print, 
                 cmd = ['ffmpeg', '-y', '-i', current, '-i', logo_path,
                        '-filter_complex', filter_str,
                        '-map', '[outv]', '-map', '0:a',
-                       '-c:v', 'libx264', '-c:a', 'aac', '-preset', 'ultrafast', bars_out]
+                       '-c:v', 'libx264', '-c:a', 'aac', '-b:a', '320k', '-preset', 'ultrafast', bars_out]
             elif use_logo:
                 log_fn(f"🖼️  Filling bottom bar with logo ({vid_w}x{bar_h})...")
                 filter_str = (
@@ -874,12 +897,12 @@ def render_montage(clips_info, top_text, transition, output_path, log_fn=print, 
                 cmd = ['ffmpeg', '-y', '-i', current, '-i', logo_path,
                        '-filter_complex', filter_str,
                        '-map', '[outv]', '-map', '0:a',
-                       '-c:v', 'libx264', '-c:a', 'aac', '-preset', 'ultrafast', bars_out]
+                       '-c:v', 'libx264', '-c:a', 'aac', '-b:a', '320k', '-preset', 'ultrafast', bars_out]
             else:
                 log_fn(f"⬛  Blacking out top bar...")
                 cmd = ['ffmpeg', '-y', '-i', current,
                        '-vf', f'drawbox=x=0:y=0:w=iw:h={top_bar_bottom}:color=black:t=fill',
-                       '-c:v', 'libx264', '-c:a', 'aac', '-preset', 'ultrafast', bars_out]
+                       '-c:v', 'libx264', '-c:a', 'aac', '-b:a', '320k', '-preset', 'ultrafast', bars_out]
 
             r = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, timeout=FFMPEG_TIMEOUT)
             if r.returncode != 0:
@@ -923,7 +946,7 @@ def _run(cmd, label, log_fn):
     try:
         r = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, timeout=FFMPEG_TIMEOUT)
         if r.returncode != 0:
-            log_fn(f"❌  {label}: " + r.stderr.decode(errors='replace')[-300:])
+            log_fn(f"❌  {label}: " + r.stderr.decode(errors='replace')[-800:])
             return False
         return True
     except subprocess.TimeoutExpired:
@@ -940,11 +963,11 @@ def _extract(clip_path, ss, duration, vfilter, aspeed, out_path, label, log_fn):
         cmd += ['-vf', vfilter]
     if aspeed != 1.0:
         cmd += ['-af', f'atempo={aspeed}']
-    cmd += ['-c:v', 'libx264', '-c:a', 'aac', '-preset', 'ultrafast', out_path]
+    cmd += ['-c:v', 'libx264', '-c:a', 'aac', '-b:a', '320k', '-preset', 'ultrafast', out_path]
     return _run(cmd, label, log_fn)
 
 
-def render_hype_reel(clips_info, title_text, logo_path, output_path, log_fn=print):
+def render_hype_reel(clips_info, title_text, logo_path, output_path, log_fn=print, outro_music_path=None):
     """
     clips_info: list of {path, hook_offset, transition}
     Structure: clip1 hook + fade to black → title card (logo + text, fade in/out)
@@ -983,7 +1006,7 @@ def render_hype_reel(clips_info, title_text, logo_path, output_path, log_fn=prin
                 '-ss', str(seg_start), '-i', info['path'],
                 '-t', str(seg_dur),
                 '-vf', f'scale={reel_w}:{reel_h}',
-                '-c:v', 'libx264', '-c:a', 'aac', '-ar', '44100', '-ac', '2',
+                '-c:v', 'libx264', '-c:a', 'aac', '-b:a', '320k', '-ar', '44100', '-ac', '2',
                 '-preset', 'ultrafast', '-r', '30',
                 seg,
             ], f"extract clip {i+1}", log_fn):
@@ -991,26 +1014,29 @@ def render_hype_reel(clips_info, title_text, logo_path, output_path, log_fn=prin
 
             segments.append({'path': seg, 'duration': seg_dur, 'transition': info.get('transition', 'flash')})
 
-        # ── 2. Fade to black at end of clip 1 ────────────────────────────────
-        log_fn("🎬  Fading opening clip to black...")
-        fade_dur = 1.0
-        fade_st  = round(max(0.0, segments[0]['duration'] - fade_dur), 3)
-        seg1_out = _tmp()
-        if not _run([
-            'ffmpeg', '-y', '-i', segments[0]['path'],
-            '-filter_complex',
-            f"[0:v]fade=t=out:st={fade_st}:d={fade_dur}:color=black[v];"
-            f"[0:a]afade=t=out:st={fade_st}:d={fade_dur}[a]",
-            '-map', '[v]', '-map', '[a]',
-            '-c:v', 'libx264', '-c:a', 'aac', '-preset', 'ultrafast', '-r', '30',
-            seg1_out,
-        ], "clip 1 fadeout", log_fn):
-            return False
-        segments[0]['path'] = seg1_out
+        # ── 2. Clip 1 visual trim + title card with clip 1 audio overlay ─────
+        overlap_dur   = 3.0  # seconds of clip 1 audio that plays under the title card
+        seg1_full     = segments[0]['path']   # keep reference before replacing
+        seg1_dur      = segments[0]['duration']
+        visual_dur    = round(max(0.0, seg1_dur - overlap_dur), 3)
+        audio_ss      = round(max(0.0, seg1_dur - overlap_dur), 3)
 
-        # ── 3. Title card: logo + text, fade in then fade out ─────────────────
+        log_fn("✂️  Trimming opening clip visual...")
+        seg1_visual = _tmp()
+        if not _run([
+            'ffmpeg', '-y', '-i', seg1_full,
+            '-t', str(visual_dur),
+            '-c:v', 'libx264', '-c:a', 'copy',
+            '-preset', 'ultrafast', '-r', '30',
+            seg1_visual,
+        ], "clip 1 visual trim", log_fn):
+            return False
+        segments[0]['path']     = seg1_visual
+        segments[0]['duration'] = visual_dur
+
+        # ── 3. Title card: logo + text, fade in — audio from clip 1 tail ─────
         log_fn(f"🎨  Rendering title card: '{title_text}'...")
-        card_dur = 4.0
+        card_dur = 3.0
         fi_dur   = 1.0
         fo_dur   = 1.0
 
@@ -1042,11 +1068,12 @@ def render_hype_reel(clips_info, title_text, logo_path, output_path, log_fn=prin
         if not _run([
             'ffmpeg', '-y',
             '-loop', '1', '-i', card_png,
-            '-f', 'lavfi', '-i', 'anullsrc=r=44100:cl=stereo',
+            '-ss', str(audio_ss), '-i', seg1_full,
             '-t', str(card_dur),
-            '-vf', f'scale={reel_w}:{reel_h},fade=t=in:st=0:d={fi_dur},fade=t=out:st={fo_st}:d={fo_dur}',
-            '-c:v', 'libx264', '-c:a', 'aac', '-preset', 'ultrafast',
-            '-pix_fmt', 'yuv420p', '-shortest', '-r', '30',
+            '-filter_complex', f'[0:v]scale={reel_w}:{reel_h},fade=t=in:st=0:d={fi_dur},fade=t=out:st={fo_st}:d={fo_dur}[v]',
+            '-map', '[v]', '-map', '1:a',
+            '-c:v', 'libx264', '-c:a', 'aac', '-b:a', '320k', '-ar', '44100', '-ac', '2',
+            '-preset', 'ultrafast', '-pix_fmt', 'yuv420p', '-r', '30',
             title_vid,
         ], "title card", log_fn):
             return False
@@ -1063,29 +1090,334 @@ def render_hype_reel(clips_info, title_text, logo_path, output_path, log_fn=prin
             if not _concat_segments(remaining, rest_vid, log_fn):
                 return False
 
-        # ── 5. Final assembly ─────────────────────────────────────────────────
+        # ── 5. Fade last clip to black (only when outro enabled) ──────────────
+        if rest_vid and outro_music_path:
+            cap_last  = cv2.VideoCapture(rest_vid)
+            last_dur  = cap_last.get(cv2.CAP_PROP_FRAME_COUNT) / (cap_last.get(cv2.CAP_PROP_FPS) or 30)
+            cap_last.release()
+            fade_st   = round(max(0.0, last_dur - 1.0), 3)
+            rest_faded = _tmp()
+            log_fn("🎬  Fading last clip to black...")
+            if not _run([
+                'ffmpeg', '-y', '-i', rest_vid,
+                '-filter_complex',
+                f'[0:v]fade=t=out:st={fade_st}:d=1:color=black[v];'
+                f'[0:a]afade=t=out:st={fade_st}:d=1[a]',
+                '-map', '[v]', '-map', '[a]',
+                '-c:v', 'libx264', '-c:a', 'aac', '-b:a', '320k', '-preset', 'ultrafast', '-r', '30',
+                rest_faded,
+            ], "last clip fadeout", log_fn):
+                return False
+            rest_vid = rest_faded
+
+        # ── 6. Outro card ─────────────────────────────────────────────────────
+        outro_vid = None
+        if outro_music_path and os.path.exists(outro_music_path):
+            log_fn("🎤  Rendering outro card...")
+            outro_dur = 8.0
+            fi_dur    = 1.0
+            fo_st     = outro_dur - 1.0
+
+            outro_img = Image.new('RGBA', (reel_w, reel_h), (0, 0, 0, 255))
+            odraw     = ImageDraw.Draw(outro_img)
+
+            text_top = int(reel_h * 0.30)
+            if logo_path and os.path.exists(logo_path):
+                try:
+                    ologo    = Image.open(logo_path).convert('RGBA')
+                    logo_h   = int(reel_h * 0.18)
+                    scale    = logo_h / ologo.height
+                    logo_w   = int(ologo.width * scale)
+                    ologo    = ologo.resize((logo_w, logo_h), Image.LANCZOS)
+                    logo_x   = (reel_w - logo_w) // 2
+                    logo_y   = int(reel_h * 0.04)
+                    outro_img.paste(ologo, (logo_x, logo_y), ologo)
+                    text_top = logo_y + logo_h + int(reel_h * 0.025)
+                except Exception as e:
+                    log_fn(f"⚠️  Outro logo load failed: {e}")
+
+            # "THANKS FOR WATCHING" — bar just tall enough so BAR_PADDING never constrains
+            h1_size = int(reel_h * 0.100)
+            h1_bar  = h1_size + BAR_PADDING * 2 + 10
+            _draw_bar_text(odraw, "THANKS FOR WATCHING", reel_w, text_top, text_top + h1_bar, h1_size)
+            y = text_top + h1_bar + int(reel_h * 0.009)
+
+            # Divider
+            margin = int(reel_w * 0.06)
+            odraw.line([(margin, y), (reel_w - margin, y)], fill=(255, 255, 255, 160), width=3)
+            y += int(reel_h * 0.022)
+
+            # Sub-lines — sized to fit all 4 lines comfortably on canvas
+            sub_size = int(reel_h * 0.068)
+            sub_bar  = sub_size + BAR_PADDING * 2 + 8
+            for text in ("CLIP SUBMISSIONS WELCOME!", "SUBSCRIBE TO HELP THE CHANNEL GROW ♥", "NEW SHORTS DAILY!"):
+                _draw_bar_text(odraw, text, reel_w, y, y + sub_bar, sub_size)
+                y += sub_bar + int(reel_h * 0.007)
+
+            outro_png = _tmp('.png')
+            outro_img.save(outro_png)
+
+            outro_vid = _tmp()
+            if not _run([
+                'ffmpeg', '-y',
+                '-loop', '1', '-i', outro_png,
+                '-stream_loop', '-1', '-i', outro_music_path,
+                '-t', str(outro_dur),
+                '-filter_complex',
+                f'[0:v]scale={reel_w}:{reel_h},fade=t=in:st=0:d={fi_dur},fade=t=out:st={fo_st}:d=1[v];'
+                f'[1:a]afade=t=in:st=0:d={fi_dur},afade=t=out:st={fo_st}:d=1[a]',
+                '-map', '[v]', '-map', '[a]',
+                '-c:v', 'libx264', '-c:a', 'aac', '-b:a', '320k',
+                '-preset', 'ultrafast', '-pix_fmt', 'yuv420p', '-r', '30',
+                outro_vid,
+            ], "outro card", log_fn):
+                return False
+
+        # ── 7. Final assembly ─────────────────────────────────────────────────
         log_fn("🔗  Assembling final hype reel...")
         parts = [segments[0]['path'], title_vid]
         if rest_vid:
             parts.append(rest_vid)
+        if outro_vid:
+            parts.append(outro_vid)
 
-        n_parts     = len(parts)
-        input_args  = []
+        n_parts    = len(parts)
+        input_args = []
         for p in parts:
             input_args += ['-i', p]
-        filter_str  = ''.join(f'[{i}:v][{i}:a]' for i in range(n_parts)) + f'concat=n={n_parts}:v=1:a=1[outv][outa]'
+        filter_str = ''.join(f'[{i}:v][{i}:a]' for i in range(n_parts)) + f'concat=n={n_parts}:v=1:a=1[outv][outa]'
 
         if not _run([
             'ffmpeg', '-y',
         ] + input_args + [
             '-filter_complex', filter_str,
             '-map', '[outv]', '-map', '[outa]',
-            '-c:v', 'libx264', '-c:a', 'aac', '-preset', 'ultrafast',
+            '-c:v', 'libx264', '-crf', '18',
+            '-profile:v', 'high', '-level:v', '4.2',
+            '-g', '30', '-keyint_min', '30',
+            '-preset', 'slow', '-pix_fmt', 'yuv420p',
+            '-c:a', 'aac', '-b:a', '384k', '-ar', '48000',
+            '-movflags', '+faststart',
             output_path,
         ], "final assembly", log_fn):
             return False
 
         log_fn("✅  Hype reel complete!")
+        return True
+
+    except Exception as e:
+        log_fn(f"❌  {e}")
+        return False
+    finally:
+        for f in tmp_files:
+            try:
+                os.unlink(f)
+            except Exception:
+                pass
+
+
+def render_beat_sync(clip_path, hit_times, beat_times, audio_path, output_path,
+                     effect='none', flash_delay=0.0, context_before=3.0, context_after=2.0,
+                     logo_path=None, black_top_bar=False, top_text='', log_fn=print):
+    """Sync clip hit timestamps to audio beat timestamps, output as vertical 9:16 with outro card."""
+    cap = cv2.VideoCapture(clip_path)
+    src_w   = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    src_h   = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    src_fps = int(round(cap.get(cv2.CAP_PROP_FPS) or 60))
+    cap.release()
+
+    if not src_w or not src_h:
+        log_fn("❌  Could not read clip dimensions.")
+        return False
+
+    out_w = 1080
+    out_h = 1920
+    fg_w  = 1080
+    fg_h  = int(1080 * src_h / src_w)
+    fg_h  = fg_h if fg_h % 2 == 0 else fg_h - 1
+    fg_y  = (out_h - fg_h) // 2
+
+    clip_start  = max(0.0, hit_times[0] - context_before)
+    audio_start = max(0.0, beat_times[0] - context_before)
+    duration    = context_before + (beat_times[-1] - beat_times[0]) + context_after
+
+    out_hit_times = [context_before + (bt - beat_times[0]) for bt in beat_times]
+
+    log_fn(f"⚙️  Effect: {effect}  |  clip_start={clip_start:.3f}s  |  audio_start={audio_start:.3f}s  |  duration={duration:.3f}s")
+    log_fn(f"🎵  Hits land at: {[f'{t:.3f}s' for t in out_hit_times]}")
+
+    BLUR = 20
+    blur_fc = (
+        f"[0:v]scale={out_w}:{out_h}:force_original_aspect_ratio=increase,"
+        f"crop={out_w}:{out_h},"
+        f"boxblur={BLUR}:{BLUR}[bg];"
+        f"[0:v]scale={fg_w}:{fg_h}[fg];"
+        f"[bg][fg]overlay=0:{fg_y}[base]"
+    )
+
+    def _bar_filter_str(in_label, out_label):
+        """Build filter chain string that draws black bars + text onto in_label → out_label."""
+        parts = []
+        if black_top_bar:
+            bar_h_bot = out_h - fg_y - fg_h
+            parts.append(f"drawbox=x=0:y=0:w={out_w}:h={fg_y}:color=black:t=fill")
+            parts.append(f"drawbox=x=0:y={fg_y+fg_h}:w={out_w}:h={bar_h_bot}:color=black:t=fill")
+        if top_text:
+            safe_text = top_text.upper().replace("'", "\\'").replace(':', '\\:')
+            font_size  = max(32, fg_y // 5)
+            parts.append(
+                f"drawtext=fontfile='{_FFMPEG_FONT}':text='{safe_text}'"
+                f":fontsize={font_size}:fontcolor=white"
+                f":x=(w-text_w)/2:y=({fg_y}-text_h)/2"
+                f":borderw=2:bordercolor=black"
+            )
+        if parts:
+            return f";{in_label}" + ",".join(parts) + out_label
+        return ""
+
+    filter_complex = blur_fc
+
+    if effect == 'flash':
+        # bars → flash (flash brightens bars too, which looks correct)
+        bars_str = _bar_filter_str('[base]', '[based]')
+        filter_complex += bars_str
+        src = '[based]' if bars_str else '[base]'
+        expr = '+'.join(f'between(t,{t+flash_delay:.3f},{t+flash_delay+0.08:.3f})' for t in out_hit_times[:2])
+        filter_complex += f";{src}eq=brightness=0.85:enable='{expr}'[outv]"
+        vmap = '[outv]'
+    elif effect == 'punch':
+        # zoom the video content first, then draw bars on top so they stay fixed
+        px = int(out_w * 0.075)
+        py = int(out_h * 0.075)
+        pw = out_w + px * 2
+        ph = out_h + py * 2
+        expr = '+'.join(f'between(t,{t+flash_delay:.3f},{t+flash_delay+0.10:.3f})' for t in out_hit_times[:2])
+        filter_complex += (
+            f";[base]split=2[base_n][base_z]"
+            f";[base_z]scale={pw}:{ph},crop={out_w}:{out_h}:{px}:{py}[zoomed]"
+            f";[base_n][zoomed]overlay=0:0:enable='{expr}'[punched]"
+        )
+        bars_str = _bar_filter_str('[punched]', '[outv]')
+        filter_complex += bars_str
+        vmap = '[outv]' if bars_str else '[punched]'
+    else:
+        bars_str = _bar_filter_str('[base]', '[outv]')
+        filter_complex += bars_str
+        vmap = '[outv]' if bars_str else '[base]'
+
+    # Append video fade-out only (audio continues into the outro)
+    fade_dur   = 0.5
+    fade_start = max(0.0, duration - fade_dur)
+    filter_complex += f";{vmap}fade=t=out:st={fade_start:.3f}:d={fade_dur}:color=black[vfinal]"
+
+    # Where in the music track the outro picks up
+    outro_audio_start = audio_start + duration
+
+    tmp_files = []
+    try:
+        os.makedirs(os.path.dirname(output_path), exist_ok=True)
+
+        # ── 1. Render main clip to temp ───────────────────────────────────────
+        log_fn("🎬  Rendering main clip...")
+        main_tmp = tempfile.mktemp(suffix='.mp4')
+        tmp_files.append(main_tmp)
+        if not _run([
+            'ffmpeg', '-y',
+            '-ss', f'{clip_start:.3f}', '-i', clip_path,
+            '-ss', f'{audio_start:.3f}', '-i', audio_path,
+            '-filter_complex', filter_complex,
+            '-map', '[vfinal]', '-map', '1:a',
+            '-t', f'{duration:.3f}',
+            '-r', str(src_fps),
+            '-c:v', 'libx264', '-crf', '18', '-preset', 'ultrafast', '-pix_fmt', 'yuv420p',
+            '-c:a', 'aac', '-b:a', '192k',
+            main_tmp,
+        ], 'beat sync main', log_fn):
+            return False
+
+        # ── 2. Build outro card PNG ───────────────────────────────────────────
+        log_fn("🖼️  Building outro card...")
+        outro_dur = 3.5
+        outro_fi  = 0.5
+        outro_fo  = outro_dur - 0.5
+
+        card = Image.new('RGBA', (out_w, out_h), (0, 0, 0, 255))
+        draw = ImageDraw.Draw(card)
+
+        text_top = int(out_h * 0.52)
+        if logo_path and os.path.exists(logo_path):
+            try:
+                lg = Image.open(logo_path).convert('RGBA')
+                lg_h = int(out_h * 0.22)
+                lg_w = int(lg.width * (lg_h / lg.height))
+                lg   = lg.resize((lg_w, lg_h), Image.LANCZOS)
+                lg_x = (out_w - lg_w) // 2
+                lg_y = int(out_h * 0.34)
+                card.paste(lg, (lg_x, lg_y), lg)
+                text_top = lg_y + lg_h + int(out_h * 0.04)
+            except Exception as e:
+                log_fn(f"⚠️  Outro logo failed: {e}")
+
+        txt   = "New Clips Daily!"
+        font  = _load_font(max(28, out_w // 11))
+        bbox  = draw.textbbox((0, 0), txt, font=font)
+        tw    = bbox[2] - bbox[0]
+        tx    = (out_w - tw) // 2
+        draw.text((tx + 2, text_top + 2), txt, font=font, fill=(0, 0, 0, 180))
+        draw.text((tx, text_top), txt, font=font, fill=(255, 255, 255, 255))
+
+        outro_png = tempfile.mktemp(suffix='.png')
+        tmp_files.append(outro_png)
+        card.save(outro_png)
+
+        # ── 3. Render outro PNG to video (music continues from where main left off) ──
+        outro_tmp = tempfile.mktemp(suffix='.mp4')
+        tmp_files.append(outro_tmp)
+        if not _run([
+            'ffmpeg', '-y',
+            '-loop', '1', '-r', str(src_fps), '-i', outro_png,
+            '-stream_loop', '-1', '-ss', f'{outro_audio_start:.3f}', '-i', audio_path,
+            '-t', str(outro_dur),
+            '-filter_complex',
+            f'[0:v]scale={out_w}:{out_h},fade=t=in:st=0:d={outro_fi}:color=black,fade=t=out:st={outro_fo}:d=0.5:color=black[v];'
+            f'[1:a]afade=t=out:st={outro_fo}:d=0.5[a]',
+            '-map', '[v]', '-map', '[a]',
+            '-c:v', 'libx264', '-crf', '18', '-preset', 'ultrafast', '-pix_fmt', 'yuv420p',
+            '-c:a', 'aac', '-b:a', '192k',
+            '-shortest',
+            outro_tmp,
+        ], 'outro card', log_fn):
+            return False
+
+        # ── 4. Concat main + outro → final output ─────────────────────────────
+        main_sz  = os.path.getsize(main_tmp)
+        outro_sz = os.path.getsize(outro_tmp)
+        log_fn(f"📁  main_tmp={main_sz}b  outro_tmp={outro_sz}b")
+        if main_sz == 0 or outro_sz == 0:
+            log_fn("❌  A temp file is empty — aborting concat.")
+            return False
+        # Write a concat list file (demuxer approach — no stream-matching constraints)
+        list_file = tempfile.mktemp(suffix='.txt')
+        tmp_files.append(list_file)
+        with open(list_file, 'w') as f:
+            f.write(f"file '{main_tmp.replace(chr(92), '/')}'\n")
+            f.write(f"file '{outro_tmp.replace(chr(92), '/')}'\n")
+
+        log_fn("🔗  Assembling final video...")
+        if not _run([
+            'ffmpeg', '-y',
+            '-f', 'concat', '-safe', '0', '-i', list_file,
+            '-c:v', 'libx264', '-crf', '18',
+            '-profile:v', 'high', '-level:v', '4.2',
+            '-g', '30', '-keyint_min', '30',
+            '-preset', 'slow', '-pix_fmt', 'yuv420p',
+            '-c:a', 'aac', '-b:a', '384k', '-ar', '48000',
+            '-movflags', '+faststart',
+            output_path,
+        ], 'final assembly', log_fn):
+            return False
+
+        log_fn("✅  Beat sync complete!")
         return True
 
     except Exception as e:
@@ -1159,7 +1491,7 @@ def render_fade_to_text(clip_path, hook_offset, fade_text, output_path, log_fn=p
                 'ffmpeg', '-y', '-i', clip_path, '-i', ov_png,
                 '-filter_complex', filter_complex,
                 '-map', '[v]', '-map', '[a]',
-                '-c:v', 'libx264', '-c:a', 'aac', '-preset', 'ultrafast', '-r', '30',
+                '-c:v', 'libx264', '-c:a', 'aac', '-b:a', '320k', '-preset', 'ultrafast', '-r', '30',
                 part1,
             ]
         else:
@@ -1173,7 +1505,7 @@ def render_fade_to_text(clip_path, hook_offset, fade_text, output_path, log_fn=p
                 'ffmpeg', '-y', '-i', clip_path,
                 '-filter_complex', filter_complex,
                 '-map', '[v]', '-map', '[a]',
-                '-c:v', 'libx264', '-c:a', 'aac', '-preset', 'ultrafast', '-r', '30',
+                '-c:v', 'libx264', '-c:a', 'aac', '-b:a', '320k', '-preset', 'ultrafast', '-r', '30',
                 part1,
             ]
 
@@ -1195,7 +1527,7 @@ def render_fade_to_text(clip_path, hook_offset, fade_text, output_path, log_fn=p
             '-f', 'lavfi', '-i', 'anullsrc=r=44100:cl=stereo',
             '-t', str(card_dur),
             '-vf', f'fade=t=in:st=0:d={fade_in_dur}',
-            '-c:v', 'libx264', '-c:a', 'aac', '-preset', 'ultrafast',
+            '-c:v', 'libx264', '-c:a', 'aac', '-b:a', '320k', '-preset', 'ultrafast',
             '-pix_fmt', 'yuv420p', '-shortest', '-r', '30',
             part2,
         ], "text card", log_fn):
@@ -1213,7 +1545,12 @@ def render_fade_to_text(clip_path, hook_offset, fade_text, output_path, log_fn=p
         if not _run([
             'ffmpeg', '-y',
             '-f', 'concat', '-safe', '0', '-i', concat_path,
-            '-c:v', 'libx264', '-c:a', 'aac', '-preset', 'ultrafast',
+            '-c:v', 'libx264', '-crf', '18',
+            '-profile:v', 'high', '-level:v', '4.2',
+            '-g', '30', '-keyint_min', '30',
+            '-preset', 'slow', '-pix_fmt', 'yuv420p',
+            '-c:a', 'aac', '-b:a', '384k', '-ar', '48000',
+            '-movflags', '+faststart',
             output_path,
         ], "concat", log_fn):
             return False
@@ -1285,7 +1622,7 @@ def render_dankify(clip_path, hook_start, output_path, log_fn=print):
             '-t', str(round(hook_dur, 3)),
             '-vf', f"setpts=PTS-STARTPTS,{_text_vf('OMG!')}",
             '-af', 'asetpts=PTS-STARTPTS',
-            '-c:v', 'libx264', '-c:a', 'aac', '-preset', 'ultrafast', hook_path,
+            '-c:v', 'libx264', '-c:a', 'aac', '-b:a', '320k', '-preset', 'ultrafast', hook_path,
         ], "hook", log_fn):
             return False
 
@@ -1300,7 +1637,7 @@ def render_dankify(clip_path, hook_start, output_path, log_fn=print):
                    '-ss', str(round(hook_start, 3)), '-i', clip_path,
                    '-t',  str(round(hook_dur, 3)),
                    '-vf', vf, '-af', 'asetpts=PTS-STARTPTS',
-                   '-c:v', 'libx264', '-c:a', 'aac', '-preset', 'ultrafast', seg]
+                   '-c:v', 'libx264', '-c:a', 'aac', '-b:a', '320k', '-preset', 'ultrafast', seg]
             if _run(cmd, top_text, log_fn):
                 replay_segs.append((seg, hook_dur, xfade_tr))
             else:
@@ -1339,7 +1676,12 @@ def render_dankify(clip_path, hook_start, output_path, log_fn=print):
             'ffmpeg', '-y'] + inputs + [
             '-filter_complex', filter_str,
             '-map', f'[xv{n-1}]', '-map', f'[xa{n-1}]',
-            '-c:v', 'libx264', '-c:a', 'aac', '-preset', 'ultrafast',
+            '-c:v', 'libx264', '-crf', '18',
+            '-profile:v', 'high', '-level:v', '4.2',
+            '-g', '30', '-keyint_min', '30',
+            '-preset', 'slow', '-pix_fmt', 'yuv420p',
+            '-c:a', 'aac', '-b:a', '384k', '-ar', '48000',
+            '-movflags', '+faststart',
             output_path,
         ], "join", log_fn):
             return False
