@@ -465,11 +465,14 @@ def run_montage():
     transition = data.get("transition", "cut").strip()
     logo_path     = data.get("logo_path", "").strip() or None
     black_top_bar = bool(data.get("black_top_bar", False))
+    zoom          = bool(data.get("zoom", False))
     clips_data    = data.get("clips", [])
+    FG_ZOOM       = 1.5
 
     if not session or len(clips_data) < 2:
         return jsonify({"error": "session and at least 2 clips are required"}), 400
 
+    subfolder  = "original" if zoom else "vertical"
     clips_root = os.path.abspath("clips")
     clips_info = []
     for c in clips_data:
@@ -478,7 +481,7 @@ def run_montage():
         end_early   = float(c.get("end_early", 0.0))
         if not clip_rel:
             return jsonify({"error": "Each clip entry must have a clip filename"}), 400
-        clip_path = os.path.join(clips_root, session, "vertical", clip_rel)
+        clip_path = os.path.join(clips_root, session, subfolder, clip_rel)
         if not os.path.exists(clip_path):
             return jsonify({"error": f"Clip not found: {clip_rel}"}), 404
         clip_transition = c.get("transition", "").strip() or transition
@@ -490,7 +493,9 @@ def run_montage():
     output_rel  = f"{session}/montage/{out_name}"
 
     def do_montage():
-        ok = render_montage(clips_info, top_text, transition, output_path, log_fn=log, logo_path=logo_path, black_top_bar=black_top_bar)
+        ok = render_montage(clips_info, top_text, transition, output_path, log_fn=log,
+                            logo_path=logo_path, black_top_bar=black_top_bar,
+                            fg_zoom=FG_ZOOM if zoom else 1.0)
         if ok:
             log(f"__montage_done__:{output_rel}")
         else:

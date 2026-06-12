@@ -4,7 +4,7 @@ import re
 import subprocess
 import tempfile
 
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
 FFMPEG_TIMEOUT = 180
 STROKE_WIDTH   = 6
@@ -95,6 +95,38 @@ def _bar_regions(clip_w, clip_h, fg_zoom=1.0):
     return fg_y, fg_y + fg_h
 
 
+def _draw_emoji_outlined(draw, x, y, text, font, stroke=STROKE_WIDTH):
+    """Render a color emoji with a black outline via alpha-channel dilation.
+
+    PIL's stroke_width doesn't work on color/bitmap emoji fonts, so we render
+    the emoji onto an isolated layer, dilate its alpha channel to form an outline
+    mask, fill that mask black, then composite outline + emoji onto the canvas.
+    """
+    img = draw._image
+    bb  = draw.textbbox((x, y), text, font=font, anchor='lt')
+
+    pad = stroke + 2
+    w   = bb[2] - bb[0] + pad * 2
+    h   = bb[3] - bb[1] + pad * 2
+    if w <= 0 or h <= 0:
+        draw.text((x, y), text, font=font, fill=(255, 255, 255, 255), anchor='lt')
+        return
+
+    layer = Image.new('RGBA', (w, h), (0, 0, 0, 0))
+    ld    = ImageDraw.Draw(layer)
+    ld.text((pad + x - bb[0], pad + y - bb[1]), text, font=font,
+            fill=(255, 255, 255, 255), anchor='lt')
+
+    _, _, _, alpha    = layer.split()
+    outline_alpha     = alpha.filter(ImageFilter.MaxFilter(stroke * 2 + 1))
+    black             = Image.new('RGBA', (w, h), (0, 0, 0, 255))
+    black.putalpha(outline_alpha)
+
+    ox, oy = bb[0] - pad, bb[1] - pad
+    img.paste(black, (ox, oy), black)
+    img.paste(layer, (ox, oy), layer)
+
+
 def _draw_bar_text(draw, text, clip_w, bar_top, bar_bottom, max_size=120, min_size=24):
     if not text or bar_bottom <= bar_top:
         return
@@ -138,15 +170,17 @@ def _draw_bar_text(draw, text, clip_w, bar_top, bar_bottom, max_size=120, min_si
 
         for is_emoji, seg_text in segs:
             font = fonts[is_emoji]
-            sw   = 0 if is_emoji else STROKE_WIDTH
-            draw.text(
-                (x, y), seg_text,
-                font=font,
-                fill=(255, 255, 255, 255),
-                stroke_width=sw,
-                stroke_fill=(0, 0, 0, 255) if sw else None,
-                anchor='lt',
-            )
+            if is_emoji:
+                _draw_emoji_outlined(draw, x, y, seg_text, font)
+            else:
+                draw.text(
+                    (x, y), seg_text,
+                    font=font,
+                    fill=(255, 255, 255, 255),
+                    stroke_width=STROKE_WIDTH,
+                    stroke_fill=(0, 0, 0, 255),
+                    anchor='lt',
+                )
             x += _seg_w(draw, seg_text, font, is_emoji)
 
         y += line_h + line_gap
@@ -793,7 +827,7 @@ def _concat_segments(segments, output_path, log_fn):
                 pass
 
 
-def render_montage(clips_info, top_text, transition, output_path, log_fn=print, logo_path=None, black_top_bar=False):
+def render_montage(clips_info, top_text, transition, output_path, log_fn=print, logo_path=None, black_top_bar=False, fg_zoom=1.0):
     """
     clips_info:    list of {path, hook_offset, end_early}
     transition:    'cut' | 'fade' | 'crossfade' | 'flash'
@@ -812,8 +846,10 @@ def render_montage(clips_info, top_text, transition, output_path, log_fn=print, 
         segments = []
         for i, info in enumerate(clips_info):
             cap = cv2.VideoCapture(info['path'])
-            fps = cap.get(cv2.CAP_PROP_FPS) or 30
+            fps       = cap.get(cv2.CAP_PROP_FPS) or 30
             total_dur = cap.get(cv2.CAP_PROP_FRAME_COUNT) / fps
+            src_w     = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+            src_h     = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
             cap.release()
 
             hook_offset = float(info.get('hook_offset', 5.0))
@@ -828,14 +864,44 @@ def render_montage(clips_info, top_text, transition, output_path, log_fn=print, 
             seg_path = _tmp()
 
             log_fn(f"✂️  [{i+1}/{len(clips_info)}]  hook={hook_offset}s  early={end_early}s  → {seg_start:.2f}s–{seg_start+seg_dur:.2f}s  ({seg_dur:.2f}s)  {os.path.basename(info['path'])}")
-            cmd = [
-                'ffmpeg', '-y',
-                '-ss', str(seg_start),
-                '-i', info['path'],
-                '-t', str(seg_dur),
-                '-c:v', 'libx264', '-c:a', 'aac', '-b:a', '320k', '-preset', 'ultrafast',
-                seg_path,
-            ]
+
+            if fg_zoom > 1.0 and src_w and src_h:
+                # Convert 16:9 original → 9:16 vertical with zoomed foreground
+                out_w, out_h = 1080, 1920
+                BLUR = 20
+                fg_base_h = int(out_w * src_h / src_w)
+                if fg_base_h % 2: fg_base_h -= 1
+                zoomed_h = int(fg_base_h * fg_zoom)
+                if zoomed_h % 2: zoomed_h -= 1
+                zoomed_w = int(zoomed_h * src_w / src_h)
+                if zoomed_w % 2: zoomed_w -= 1
+                fy = (out_h - zoomed_h) // 2
+                cx = max(0, (zoomed_w - out_w) // 2)
+                zoom_fc = (
+                    f"[0:v]scale={out_w}:{out_h}:force_original_aspect_ratio=increase,"
+                    f"crop={out_w}:{out_h},boxblur={BLUR}:{BLUR}[bg];"
+                    f"[0:v]scale={zoomed_w}:{zoomed_h},crop={out_w}:{zoomed_h}:{cx}:0[fg];"
+                    f"[bg][fg]overlay=0:{fy}[outv]"
+                )
+                cmd = [
+                    'ffmpeg', '-y',
+                    '-ss', str(seg_start),
+                    '-i', info['path'],
+                    '-filter_complex', zoom_fc,
+                    '-map', '[outv]', '-map', '0:a',
+                    '-t', str(seg_dur),
+                    '-c:v', 'libx264', '-c:a', 'aac', '-b:a', '320k', '-preset', 'ultrafast',
+                    seg_path,
+                ]
+            else:
+                cmd = [
+                    'ffmpeg', '-y',
+                    '-ss', str(seg_start),
+                    '-i', info['path'],
+                    '-t', str(seg_dur),
+                    '-c:v', 'libx264', '-c:a', 'aac', '-b:a', '320k', '-preset', 'ultrafast',
+                    seg_path,
+                ]
             try:
                 r = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, timeout=FFMPEG_TIMEOUT)
                 if r.returncode != 0:
@@ -870,7 +936,7 @@ def render_montage(clips_info, top_text, transition, output_path, log_fn=print, 
             vid_h = int(cap2.get(cv2.CAP_PROP_FRAME_HEIGHT))
             cap2.release()
 
-            top_bar_bottom, bottom_bar_top = _bar_regions(vid_w, vid_h)
+            top_bar_bottom, bottom_bar_top = _bar_regions(vid_w, vid_h, fg_zoom)
             bar_h = vid_h - bottom_bar_top
 
             bars_out = _tmp() if use_text else output_path
@@ -912,7 +978,7 @@ def render_montage(clips_info, top_text, transition, output_path, log_fn=print, 
 
         if use_text:
             log_fn("🎨  Burning top text...")
-            if not render_with_text(current, top_text, None, output_path, log_fn=log_fn):
+            if not render_with_text(current, top_text, None, output_path, log_fn=log_fn, fg_zoom=fg_zoom):
                 return False
 
         log_fn("✅  Montage complete.")

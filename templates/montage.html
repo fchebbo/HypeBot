@@ -113,10 +113,14 @@
         <input id="topText" type="text" placeholder="e.g. LITTLE MAC WINS A LOCAL">
       </div>
     </div>
-    <div class="row" style="margin-top:12px; align-items:center;">
+    <div class="row" style="margin-top:12px; align-items:center; gap:24px;">
       <label style="display:flex;align-items:center;gap:8px;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px;cursor:pointer;">
         <input type="checkbox" id="blackTopBar" style="accent-color:var(--accent);width:14px;height:14px;">
         Black top bar
+      </label>
+      <label style="display:flex;align-items:center;gap:8px;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px;cursor:pointer;">
+        <input type="checkbox" id="useZoom" style="accent-color:var(--accent);width:14px;height:14px;" onchange="onZoomChange()">
+        Zoom (use originals)
       </label>
     </div>
     <div class="row" style="margin-top:12px;">
@@ -262,15 +266,34 @@
     }
 
     function populateClipDropdown(sel) {
+      const useOriginal = document.getElementById('useZoom')?.checked;
       const current = sel.value;
       sel.innerHTML = '<option value="">— select clip —</option>';
       sessionClips.forEach(c => {
-        const fname = c.vertical.split('/').pop();
-        const o = document.createElement('option');
-        o.value = fname;
-        o.textContent = c.name;
-        if (fname === current) o.selected = true;
-        sel.appendChild(o);
+        if (useOriginal) {
+          if (!c.original) return;
+          const fname = c.original.split('/').pop();
+          const o = document.createElement('option');
+          o.value = fname;
+          o.textContent = c.name;
+          if (fname === current) o.selected = true;
+          sel.appendChild(o);
+        } else {
+          const fname = c.vertical.split('/').pop();
+          const o = document.createElement('option');
+          o.value = fname;
+          o.textContent = c.name;
+          if (fname === current) o.selected = true;
+          sel.appendChild(o);
+        }
+      });
+    }
+
+    function onZoomChange() {
+      repopulateAllDropdowns();
+      document.querySelectorAll('.slot').forEach(slot => {
+        const idx = slot.dataset.idx;
+        if (idx) document.getElementById(`preview-wrap-${idx}`).style.display = 'none';
       });
     }
 
@@ -279,13 +302,15 @@
     }
 
     function updateSlotPreview(idx) {
-      const session  = document.getElementById('sessionSel').value;
-      const slot     = document.querySelector(`.slot[data-idx="${idx}"]`);
-      const filename = slot.querySelector('.clip-sel').value;
-      const wrap     = document.getElementById(`preview-wrap-${idx}`);
-      const video    = document.getElementById(`preview-${idx}`);
+      const session    = document.getElementById('sessionSel').value;
+      const slot       = document.querySelector(`.slot[data-idx="${idx}"]`);
+      const filename   = slot.querySelector('.clip-sel').value;
+      const wrap       = document.getElementById(`preview-wrap-${idx}`);
+      const video      = document.getElementById(`preview-${idx}`);
       if (!session || !filename) { wrap.style.display = 'none'; return; }
-      video.src = `/clips-serve/${encodeURIComponent(session)}/vertical/${encodeURIComponent(filename)}`;
+      const useOriginal = document.getElementById('useZoom')?.checked;
+      const subfolder   = useOriginal ? 'original' : 'vertical';
+      video.src = `/clips-serve/${encodeURIComponent(session)}/${subfolder}/${encodeURIComponent(filename)}`;
       video.load();
       wrap.style.display = 'block';
     }
@@ -326,10 +351,11 @@
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           session,
-          top_text:   document.getElementById('topText').value.trim(),
-          transition: document.getElementById('transitionSel').value,
+          top_text:      document.getElementById('topText').value.trim(),
+          transition:    document.getElementById('transitionSel').value,
           logo_path:     document.getElementById('logoPath').value.trim(),
           black_top_bar: document.getElementById('blackTopBar').checked,
+          zoom:          document.getElementById('useZoom').checked,
           clips,
         }),
       });
