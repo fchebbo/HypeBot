@@ -231,18 +231,41 @@ def render_with_text(clip_path, above_text, below_text, output_path, log_fn=prin
         hv_trim = f"[0:v]trim=start={hook_start}{hv_end},setpts=PTS-STARTPTS[hv]"
         ha_trim = f"[0:a]atrim=start={hook_start}{hv_end},asetpts=PTS-STARTPTS[ha]"
 
-        if normalize_audio:
-            audio_part = ";[ha]acompressor=threshold=0.063:ratio=15:attack=100:release=800,alimiter=limit=0.65:level=disabled[ca]"
+        if hook_transition and hook_transition != 'none':
+            T            = 0.5
+            xfade_offset = round(max(0.0, hook_offset - T), 3)
+            xfade_type   = _XFADE_MAP.get(hook_transition, hook_transition)
+            log_fn(f"✨  Transition to black: {hook_transition} ({T}s)")
             audio_map  = '[ca]'
+            audio_fade = (
+                f"[ha]afade=t=out:st={xfade_offset}:d={T},"
+                f"acompressor=threshold=0.063:ratio=15:attack=100:release=800,alimiter=limit=0.65:level=disabled[ca]"
+                if normalize_audio else
+                f"[ha]afade=t=out:st={xfade_offset}:d={T}[ca]"
+            )
+            # xfade requires both inputs to share pixel format and frame rate;
+            # normalize [hv] to yuv420p@30fps and force the same on the color source.
+            hv_trim_xf = f"[0:v]trim=start={hook_start}{hv_end},setpts=PTS-STARTPTS,format=yuv420p,fps=30[hv]"
+            filter_complex = (
+                f"{hv_trim_xf};{ha_trim};"
+                f"color=c=black:s={clip_w}x{clip_h}:r=30:d={T},format=yuv420p[black];"
+                f"[hv][black]xfade=transition={xfade_type}:duration={T}:offset={xfade_offset}[cv];"
+                f"[cv][1:v]overlay=0:0[outv];"
+                f"{audio_fade}"
+            )
         else:
-            audio_part = ""
-            audio_map  = '[ha]'
+            if normalize_audio:
+                audio_map    = '[ca]'
+                audio_filter = ";[ha]acompressor=threshold=0.063:ratio=15:attack=100:release=800,alimiter=limit=0.65:level=disabled[ca]"
+            else:
+                audio_map    = '[ha]'
+                audio_filter = ""
+            filter_complex = (
+                f"{hv_trim};{ha_trim};"
+                f"[hv][1:v]overlay=0:0[outv]"
+                f"{audio_filter}"
+            )
 
-        filter_complex = (
-            f"{hv_trim};{ha_trim};"
-            f"[hv][1:v]overlay=0:0[outv]"
-            f"{audio_part}"
-        )
         cmd = [
             'ffmpeg', '-y',
             '-i', clip_path,

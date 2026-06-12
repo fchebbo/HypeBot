@@ -217,6 +217,8 @@ def render_text_route():
     extend_sec      = float(data.get("extend_sec", 0.0))
     normalize_audio = bool(data.get("normalize_audio", False))
     zoom            = bool(data.get("zoom", False))
+    zoom_end_mode   = data.get("zoom_end_mode", "none").strip()
+    zoom_end_sec    = float(data.get("zoom_end_sec", 0.0))
     FG_ZOOM         = 1.5
 
     if not clip_rel:
@@ -280,6 +282,8 @@ def render_text_route():
                 fg_zoom=FG_ZOOM if zoom else 1.0,
                 explicit_start=explicit_start,
                 base_duration=explicit_base_dur,
+                zoom_end_mode=zoom_end_mode if zoom else "none",
+                zoom_end_sec=zoom_end_sec,
             )
             if ok_cut:
                 render_source = tmp_extended

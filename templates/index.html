@@ -1380,6 +1380,8 @@
             cut_end_sec:     parseFloat(cutInput.value) || 0,
             normalize_audio: normCheck.checked,
             zoom:            zoomCheck.checked,
+            zoom_end_mode:   zoomCheck.checked ? zoomEndSelect.value : 'none',
+            zoom_end_sec:    zoomCheck.checked ? (parseFloat(zoomEndSecInput.value) || 2) : 0,
           }),
         });
         const data = await res.json();
@@ -1424,6 +1426,62 @@
     zoomRow.appendChild(zoomCheck);
     zoomRow.appendChild(zoomLabel);
     textPanel.appendChild(zoomRow);
+
+    const zoomEndRow = document.createElement('div');
+    zoomEndRow.className = 'extend-row';
+    zoomEndRow.style.display = 'none';
+
+    const zoomEndRowLabel = document.createElement('label');
+    zoomEndRowLabel.textContent = 'At end';
+
+    const zoomEndSelect = document.createElement('select');
+    zoomEndSelect.className = 'hook-offset-input';
+    zoomEndSelect.style.cssText = 'width:auto; cursor:pointer; appearance:auto;';
+    [
+      ['none',      '— none —'],
+      ['zoom_out',  'Zoom out'],
+      ['pan_left',  'Pan left'],
+      ['pan_right', 'Pan right'],
+    ].forEach(([val, lbl]) => {
+      const opt = document.createElement('option');
+      opt.value = val; opt.textContent = lbl;
+      zoomEndSelect.appendChild(opt);
+    });
+
+    const zoomEndSecInput = document.createElement('input');
+    zoomEndSecInput.className = 'hook-offset-input';
+    zoomEndSecInput.type = 'number';
+    zoomEndSecInput.value = '2';
+    zoomEndSecInput.min = '0.5';
+    zoomEndSecInput.max = '10';
+    zoomEndSecInput.step = '0.5';
+    zoomEndSecInput.title = 'Seconds before end to start transition';
+    zoomEndSecInput.style.display = 'none';
+
+    const zoomEndUnit = document.createElement('span');
+    zoomEndUnit.textContent = 's before end';
+    zoomEndUnit.style.cssText = 'font-size:11px;color:var(--muted);display:none;';
+
+    zoomEndSelect.addEventListener('change', () => {
+      const active = zoomEndSelect.value !== 'none';
+      zoomEndSecInput.style.display = active ? '' : 'none';
+      zoomEndUnit.style.display = active ? '' : 'none';
+    });
+
+    zoomCheck.addEventListener('change', () => {
+      zoomEndRow.style.display = zoomCheck.checked ? '' : 'none';
+      if (!zoomCheck.checked) {
+        zoomEndSelect.value = 'none';
+        zoomEndSecInput.style.display = 'none';
+        zoomEndUnit.style.display = 'none';
+      }
+    });
+
+    zoomEndRow.appendChild(zoomEndRowLabel);
+    zoomEndRow.appendChild(zoomEndSelect);
+    zoomEndRow.appendChild(zoomEndSecInput);
+    zoomEndRow.appendChild(zoomEndUnit);
+    textPanel.appendChild(zoomEndRow);
 
     textPanel.appendChild(aboveInput);
     textPanel.appendChild(belowInput);

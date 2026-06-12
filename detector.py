@@ -480,12 +480,7 @@ def upscale_to_4k(input_path, output_path, log_fn=print):
                 pass
 
 
-def cut_extended_vertical(video_path, ko_timestamp, extend_sec, output_path, log_fn=print, fg_zoom=1.0, explicit_start=None, base_duration=None):
-    """Cut a single extended/zoomed vertical clip from the source VOD.
-
-    fg_zoom > 1.0 scales the foreground larger and crops to canvas width,
-    showing less of the 16:9 frame but filling more of the 9:16 canvas.
-    """
+def cut_extended_vertical(video_path, ko_timestamp, extend_sec, output_path, log_fn=print, fg_zoom=1.0, explicit_start=None, base_duration=None, zoom_end_mode="none", zoom_end_sec=0.0):
     cap = cv2.VideoCapture(video_path)
     src_width  = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     src_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
@@ -507,20 +502,6 @@ def cut_extended_vertical(video_path, ko_timestamp, extend_sec, output_path, log
     fg_width  = fg_width if fg_width % 2 == 0 else fg_width - 1
     fg_y      = (out_height - fg_height) // 2
 
-    if fg_zoom > 1.0:
-        crop_x    = (fg_width - out_width) // 2
-        fg_filter = f"[0:v]scale={fg_width}:{fg_height},crop={out_width}:{fg_height}:{crop_x}:0[fg]"
-    else:
-        fg_filter = f"[0:v]scale={fg_width}:{fg_height}[fg]"
-
-    blur_filter = (
-        f"[0:v]scale={out_width}:{out_height}:force_original_aspect_ratio=increase,"
-        f"crop={out_width}:{out_height},"
-        f"boxblur={BLUR_STRENGTH}:{BLUR_STRENGTH}[bg];"
-        f"{fg_filter};"
-        f"[bg][fg]overlay=0:{fg_y}"
-    )
-
     if explicit_start is not None:
         start    = explicit_start
         duration = (base_duration or (CLIP_BEFORE_SEC + CLIP_AFTER_SEC)) + extend_sec
@@ -528,7 +509,67 @@ def cut_extended_vertical(video_path, ko_timestamp, extend_sec, output_path, log
         start    = max(0, ko_timestamp - CLIP_BEFORE_SEC)
         duration = CLIP_BEFORE_SEC + CLIP_AFTER_SEC + extend_sec
 
+    use_dynamic = (fg_zoom > 1.0
+                   and zoom_end_mode in ("zoom_out", "pan_left", "pan_right")
+                   and zoom_end_sec > 0)
+
+    if use_dynamic:
+        lerp_start = max(0.0, duration - zoom_end_sec)
+        # t_frac: 0.0 at lerp_start, 1.0 at clip end — avoids min/max commas in filter expressions
+        t_frac = (
+            f"if(lt(t,{lerp_start}),0.0,"
+            f"if(gt(t,{duration}),1.0,"
+            f"(t-{lerp_start})/{zoom_end_sec}))"
+        )
+
+        if zoom_end_mode == "zoom_out":
+            aspect  = src_width / src_height
+            z_delta = 1.0 - fg_zoom  # negative — zooming out
+            z_expr  = f"({fg_zoom}+{z_delta}*({t_frac}))"
+            fw_expr = f"trunc({fg_base_h}*{aspect}*({z_expr})/2)*2"
+            fh_expr = f"trunc({fg_base_h}*({z_expr})/2)*2"
+            # negative ox when fg wider than canvas — overlay clips at edges
+            ox_expr = f"({out_width}-({fw_expr}))/2"
+            oy_expr = f"({out_height}-({fh_expr}))/2"
+            fg_filter = f"[0:v]scale=w={fw_expr}:h={fh_expr}:eval=frame[fg]"
+            overlay   = f"[bg][fg]overlay={ox_expr}:{oy_expr}:eval=frame"
+
+        else:  # pan_left or pan_right — static scale, lerp overlay x
+            ox_center = (out_width - fg_width) // 2  # negative: fg wider than canvas
+            if zoom_end_mode == "pan_left":
+                # center → left: ox moves from ox_center toward 0
+                ox_expr = f"({ox_center}*(1-({t_frac})))"
+            else:
+                # center → right: ox moves from ox_center toward 2*ox_center
+                ox_expr = f"({ox_center}*(1+({t_frac})))"
+            fg_filter = f"[0:v]scale={fg_width}:{fg_height}[fg]"
+            overlay   = f"[bg][fg]overlay={ox_expr}:{fg_y}:eval=frame"
+
+        blur_filter = (
+            f"[0:v]scale={out_width}:{out_height}:force_original_aspect_ratio=increase,"
+            f"crop={out_width}:{out_height},"
+            f"boxblur={BLUR_STRENGTH}:{BLUR_STRENGTH}[bg];"
+            f"{fg_filter};"
+            f"{overlay}"
+        )
+    else:
+        if fg_zoom > 1.0:
+            crop_x    = (fg_width - out_width) // 2
+            fg_filter = f"[0:v]scale={fg_width}:{fg_height},crop={out_width}:{fg_height}:{crop_x}:0[fg]"
+        else:
+            fg_filter = f"[0:v]scale={fg_width}:{fg_height}[fg]"
+
+        blur_filter = (
+            f"[0:v]scale={out_width}:{out_height}:force_original_aspect_ratio=increase,"
+            f"crop={out_width}:{out_height},"
+            f"boxblur={BLUR_STRENGTH}:{BLUR_STRENGTH}[bg];"
+            f"{fg_filter};"
+            f"[bg][fg]overlay=0:{fg_y}"
+        )
+
     zoom_note = f"  zoom={fg_zoom}x" if fg_zoom > 1.0 else ""
+    if use_dynamic:
+        zoom_note += f"  → {zoom_end_mode.replace('_', ' ')} over {zoom_end_sec}s"
     log_fn(f"⏱️  Cutting {duration}s from VOD...{zoom_note}")
     cmd = [
         "ffmpeg", "-y",
