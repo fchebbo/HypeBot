@@ -532,7 +532,37 @@
 
       toggleRow.appendChild(vertBtn);
       toggleRow.appendChild(origBtn);
+
+      const archCopyBtn = document.createElement('button');
+      archCopyBtn.className = 'restore-btn';
+      archCopyBtn.textContent = '📋';
+      archCopyBtn.title = 'Copy vertical clip to clipboard';
+      archCopyBtn.style.marginLeft = 'auto';
+      archCopyBtn.addEventListener('click', () => copyClip(`archive/${month}/vertical/${fname}`, archCopyBtn));
+      toggleRow.appendChild(archCopyBtn);
+
+      const archCopyOrigBtn = document.createElement('button');
+      archCopyOrigBtn.className = 'restore-btn';
+      archCopyOrigBtn.textContent = '📋16:9';
+      archCopyOrigBtn.title = 'Copy original (16:9) to clipboard';
+      archCopyOrigBtn.addEventListener('click', () => copyClip(`archive/${month}/original/${origFname}`, archCopyOrigBtn));
+      toggleRow.appendChild(archCopyOrigBtn);
+
       footer.appendChild(toggleRow);
+    } else {
+      const archCopyBtn = document.createElement('button');
+      archCopyBtn.className = 'restore-btn';
+      archCopyBtn.textContent = '📋';
+      archCopyBtn.title = 'Copy vertical clip to clipboard';
+      archCopyBtn.addEventListener('click', () => copyClip(`archive/${month}/vertical/${fname}`, archCopyBtn));
+      footer.appendChild(archCopyBtn);
+
+      const archCopyOrigBtn = document.createElement('button');
+      archCopyOrigBtn.className = 'restore-btn';
+      archCopyOrigBtn.textContent = '📋16:9';
+      archCopyOrigBtn.title = 'Copy original (16:9) to clipboard';
+      archCopyOrigBtn.addEventListener('click', () => copyClip(`archive/${month}/original/${fname.replace('_vertical.mp4', '_original.mp4')}`, archCopyOrigBtn));
+      footer.appendChild(archCopyOrigBtn);
     }
 
     card.appendChild(wrap);
@@ -560,9 +590,36 @@
     fileEl.textContent = rawFilename(fname);
     footer.appendChild(fileEl);
 
+    const simpleCopyBtn = document.createElement('button');
+    simpleCopyBtn.className = 'restore-btn';
+    simpleCopyBtn.textContent = '📋';
+    simpleCopyBtn.title = 'Copy to clipboard';
+    simpleCopyBtn.addEventListener('click', () => copyClip(`archive/${month}/${subdir}/${fname}`, simpleCopyBtn));
+    footer.appendChild(simpleCopyBtn);
+
     card.appendChild(wrap);
     card.appendChild(footer);
     return card;
+  }
+
+  async function copyClip(relFile, btn) {
+    const orig = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = '...';
+    const res = await fetch('/copy-clip', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ file: relFile }),
+    });
+    if (res.ok) {
+      btn.textContent = '✓';
+      setTimeout(() => { btn.textContent = orig; btn.disabled = false; }, 1500);
+    } else {
+      const data = await res.json().catch(() => ({}));
+      console.warn(`[HypeBot] copyClip: ${data.error || res.status} — ${relFile}`);
+      btn.textContent = '✕';
+      setTimeout(() => { btn.textContent = orig; btn.disabled = false; }, 1500);
+    }
   }
 
   function rawFilename(fname) {

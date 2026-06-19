@@ -10,7 +10,9 @@
       "Bash(ls /c/Python*)",
       "Bash(py -c ' *)",
       "Bash(.venv/Scripts/python -c ' *)",
-      "WebSearch"
+      "WebSearch",
+      "Bash(gh api *)",
+      "WebFetch(domain:github.com)"
     ]
   }
 }

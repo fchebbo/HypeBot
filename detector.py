@@ -3,6 +3,7 @@ import numpy as np
 import subprocess
 import os
 import json
+import tempfile
 from collections import deque
 
 # --- Tunable constants ---
@@ -528,49 +529,54 @@ def cut_extended_vertical(video_path, ko_timestamp, extend_sec, output_path, log
             z_expr  = f"({fg_zoom}+{z_delta}*({t_frac}))"
             fw_expr = f"trunc({fg_base_h}*{aspect}*({z_expr})/2)*2"
             fh_expr = f"trunc({fg_base_h}*({z_expr})/2)*2"
-            # negative ox when fg wider than canvas — overlay clips at edges
             ox_expr = f"({out_width}-({fw_expr}))/2"
             oy_expr = f"({out_height}-({fh_expr}))/2"
-            fg_filter = f"[0:v]scale=w={fw_expr}:h={fh_expr}:eval=frame[fg]"
-            overlay   = f"[bg][fg]overlay={ox_expr}:{oy_expr}:eval=frame"
-
-        else:  # pan_left or pan_right — static scale, lerp overlay x
-            ox_center = (out_width - fg_width) // 2  # negative: fg wider than canvas
+        else:  # pan_left or pan_right
+            ox_center = (out_width - fg_width) // 2
             if zoom_end_mode == "pan_left":
-                # center → left: ox moves from ox_center toward 0
                 ox_expr = f"({ox_center}*(1-({t_frac})))"
             else:
-                # center → right: ox moves from ox_center toward 2*ox_center
                 ox_expr = f"({ox_center}*(1+({t_frac})))"
-            fg_filter = f"[0:v]scale={fg_width}:{fg_height}[fg]"
-            overlay   = f"[bg][fg]overlay={ox_expr}:{fg_y}:eval=frame"
-
-        blur_filter = (
-            f"[0:v]scale={out_width}:{out_height}:force_original_aspect_ratio=increase,"
-            f"crop={out_width}:{out_height},"
-            f"boxblur={BLUR_STRENGTH}:{BLUR_STRENGTH}[bg];"
-            f"{fg_filter};"
-            f"{overlay}"
-        )
-    else:
-        if fg_zoom > 1.0:
-            crop_x    = (fg_width - out_width) // 2
-            fg_filter = f"[0:v]scale={fg_width}:{fg_height},crop={out_width}:{fg_height}:{crop_x}:0[fg]"
-        else:
-            fg_filter = f"[0:v]scale={fg_width}:{fg_height}[fg]"
-
-        blur_filter = (
-            f"[0:v]scale={out_width}:{out_height}:force_original_aspect_ratio=increase,"
-            f"crop={out_width}:{out_height},"
-            f"boxblur={BLUR_STRENGTH}:{BLUR_STRENGTH}[bg];"
-            f"{fg_filter};"
-            f"[bg][fg]overlay=0:{fg_y}"
-        )
 
     zoom_note = f"  zoom={fg_zoom}x" if fg_zoom > 1.0 else ""
     if use_dynamic:
         zoom_note += f"  → {zoom_end_mode.replace('_', ' ')} over {zoom_end_sec}s"
     log_fn(f"⏱️  Cutting {duration}s from VOD...{zoom_note}")
+
+    bg_in   = "[0:v]"
+    fg_in   = "[0:v]"
+    out_tag = ""
+
+    if use_dynamic:
+        if zoom_end_mode == "zoom_out":
+            fg_part = f"{fg_in}scale=w={fw_expr}:h={fh_expr}:eval=frame[fg]"
+            overlay = f"[bg][fg]overlay={ox_expr}:{oy_expr}:eval=frame{out_tag}"
+        else:
+            fg_part = f"{fg_in}scale={fg_width}:{fg_height}[fg]"
+            overlay = f"[bg][fg]overlay={ox_expr}:{fg_y}:eval=frame{out_tag}"
+        inner = (
+            f"{bg_in}scale={out_width}:{out_height}:force_original_aspect_ratio=increase,"
+            f"crop={out_width}:{out_height},"
+            f"boxblur={BLUR_STRENGTH}:{BLUR_STRENGTH}[bg];"
+            f"{fg_part};"
+            f"{overlay}"
+        )
+    else:
+        if fg_zoom > 1.0:
+            crop_x  = (fg_width - out_width) // 2
+            fg_part = f"{fg_in}scale={fg_width}:{fg_height},crop={out_width}:{fg_height}:{crop_x}:0[fg]"
+        else:
+            fg_part = f"{fg_in}scale={fg_width}:{fg_height}[fg]"
+        inner = (
+            f"{bg_in}scale={out_width}:{out_height}:force_original_aspect_ratio=increase,"
+            f"crop={out_width}:{out_height},"
+            f"boxblur={BLUR_STRENGTH}:{BLUR_STRENGTH}[bg];"
+            f"{fg_part};"
+            f"[bg][fg]overlay=0:{fg_y}{out_tag}"
+        )
+
+    blur_filter = inner
+
     cmd = [
         "ffmpeg", "-y",
         "-ss", str(start),
@@ -578,8 +584,12 @@ def cut_extended_vertical(video_path, ko_timestamp, extend_sec, output_path, log
         "-t", str(duration),
         "-filter_complex", blur_filter,
         "-c:v", "libx264", "-b:v", "15M", "-maxrate", "20M", "-bufsize", "30M",
+        "-profile:v", "high", "-level:v", "4.2",
+        "-g", "30", "-keyint_min", "30",
         "-preset", "slow", "-pix_fmt", "yuv420p",
         "-c:a", "aac", "-b:a", "384k", "-ar", "48000",
+        "-movflags", "+faststart",
         output_path,
     ]
+
     return run_ffmpeg(cmd, "extended_vertical", log_fn)

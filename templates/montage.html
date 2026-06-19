@@ -256,6 +256,12 @@
             <input class="early-in" type="number" value="0" min="0" max="12" step="0.5">
           </div>
         </div>
+        <div class="row">
+          <div class="field">
+            <label>Top text override <span style="color:var(--muted);font-size:10px;">(leave blank to use global)</span></label>
+            <input class="clip-top-text" type="text" placeholder="e.g. ROY WINS IT">
+          </div>
+        </div>
         <div class="preview-wrap" id="preview-wrap-${idx}">
           <video id="preview-${idx}" controls preload="none"></video>
         </div>
@@ -291,10 +297,6 @@
 
     function onZoomChange() {
       repopulateAllDropdowns();
-      document.querySelectorAll('.slot').forEach(slot => {
-        const idx = slot.dataset.idx;
-        if (idx) document.getElementById(`preview-wrap-${idx}`).style.display = 'none';
-      });
     }
 
     function repopulateAllDropdowns() {
@@ -333,6 +335,7 @@
           hook_offset: parseFloat(slot.querySelector('.hook-in').value)  || 5,
           end_early:   parseFloat(slot.querySelector('.early-in').value) || 0,
           transition:  trSel ? trSel.value : document.getElementById('transitionSel').value,
+          top_text:    slot.querySelector('.clip-top-text').value.trim(),
         });
       });
 

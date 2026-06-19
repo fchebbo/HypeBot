@@ -213,6 +213,13 @@ def render_text_route():
     hook_offset     = float(data.get("hook_offset", 2.8))
     hook_transition = data.get("hook_transition", "none").strip()
     hook_only       = bool(data.get("hook_only", False))
+    hook_above      = data.get("hook_above", "").strip() or None
+    hook_below      = data.get("hook_below", "").strip() or None
+    # Main text falls back to hook text when left blank
+    if not above and hook_above:
+        above = hook_above
+    if not below and hook_below:
+        below = hook_below
     cut_end_sec     = float(data.get("cut_end_sec", 0.0))
     extend_sec      = float(data.get("extend_sec", 0.0))
     normalize_audio = bool(data.get("normalize_audio", False))
@@ -291,12 +298,33 @@ def render_text_route():
                 capture("⚠️  Cut failed — using standard clip.")
         else:
             if not vod_path or not os.path.exists(vod_path or ""):
-                capture("⚠️  VOD not found — zoom/extend unavailable for this session.")
+                # Fallback: use the 16:9 original clip if the VOD download is gone
+                orig_dir = os.path.join(os.path.dirname(os.path.dirname(clip_path)), "original")
+                orig_fname = os.path.basename(clip_path).replace("_vertical.mp4", "_original.mp4")
+                orig_clip_path = os.path.join(orig_dir, orig_fname)
+                if os.path.exists(orig_clip_path):
+                    capture("📽️  VOD unavailable — using 16:9 original as zoom source.")
+                    tmp_extended = tempfile.NamedTemporaryFile(suffix=".mp4", delete=False).name
+                    ok_cut = cut_extended_vertical(
+                        orig_clip_path, None, extend_sec, tmp_extended,
+                        log_fn=capture,
+                        fg_zoom=FG_ZOOM if zoom else 1.0,
+                        explicit_start=0.0,
+                        base_duration=None,
+                        zoom_end_mode=zoom_end_mode if zoom else "none",
+                        zoom_end_sec=zoom_end_sec,
+                    )
+                    if ok_cut:
+                        render_source = tmp_extended
+                    else:
+                        capture("⚠️  Cut from original failed — using standard clip.")
+                else:
+                    capture("⚠️  VOD not found — zoom/extend unavailable for this session.")
             else:
                 capture("⚠️  No timestamp found for this clip — re-cut it via Manual Cut to enable zoom/extend.")
 
     try:
-        ok = render_with_text(render_source, above, below, output_path, log_fn=capture, hook=hook, hook_offset=hook_offset, normalize_audio=normalize_audio, hook_transition=hook_transition, cut_end_sec=cut_end_sec, hook_only=hook_only, fg_zoom=FG_ZOOM if zoom else 1.0)
+        ok = render_with_text(render_source, above, below, output_path, log_fn=capture, hook=hook, hook_offset=hook_offset, normalize_audio=normalize_audio, hook_transition=hook_transition, cut_end_sec=cut_end_sec, hook_only=hook_only, fg_zoom=FG_ZOOM if zoom else 1.0, hook_above=hook_above, hook_below=hook_below)
     finally:
         if tmp_extended and os.path.exists(tmp_extended):
             try:
@@ -489,7 +517,8 @@ def run_montage():
         if not os.path.exists(clip_path):
             return jsonify({"error": f"Clip not found: {clip_rel}"}), 404
         clip_transition = c.get("transition", "").strip() or transition
-        clips_info.append({"path": clip_path, "hook_offset": hook_offset, "end_early": end_early, "transition": clip_transition})
+        clip_top_text   = c.get("top_text", "").strip()
+        clips_info.append({"path": clip_path, "hook_offset": hook_offset, "end_early": end_early, "transition": clip_transition, "top_text": clip_top_text})
 
     out_name    = f"montage_{int(time.time())}.mp4"
     output_dir  = os.path.join(clips_root, session, "montage")
@@ -643,6 +672,49 @@ def serve_clip(filename):
     resp = send_from_directory(os.path.abspath('clips'), filename)
     resp.headers['Cache-Control'] = 'no-store'
     return resp
+
+
+@app.route("/open-folder", methods=["POST"])
+def open_folder_route():
+    data = request.get_json()
+    rel       = (data.get("path") or "").strip()
+    file_name = (data.get("file") or "").strip()
+    if not rel:
+        return jsonify({"error": "No path"}), 400
+    abs_path = os.path.abspath(rel)
+    app_root = os.path.abspath(".")
+    if not abs_path.startswith(app_root):
+        return jsonify({"error": "Invalid path"}), 400
+    if not os.path.exists(abs_path):
+        return jsonify({"error": "Path not found"}), 404
+    if file_name:
+        abs_file = os.path.join(abs_path, file_name)
+        subprocess.Popen(f'explorer /select,"{abs_file}"')
+    else:
+        subprocess.Popen(f'explorer "{abs_path}"')
+    return jsonify({"ok": True})
+
+
+@app.route("/copy-clip", methods=["POST"])
+def copy_clip_route():
+    data = request.get_json()
+    rel = (data.get("file") or "").strip()
+    if not rel:
+        return jsonify({"error": "No file specified"}), 400
+    abs_file = os.path.abspath(rel)
+    app_root = os.path.abspath(".")
+    if not abs_file.startswith(app_root):
+        return jsonify({"error": "Invalid path"}), 400
+    if not os.path.exists(abs_file):
+        return jsonify({"error": "File not found"}), 404
+    ps_cmd = (
+        "Add-Type -Assembly System.Windows.Forms; "
+        "$f = New-Object System.Collections.Specialized.StringCollection; "
+        f"$f.Add('{abs_file}'); "
+        "[System.Windows.Forms.Clipboard]::SetFileDropList($f)"
+    )
+    subprocess.run(["powershell", "-NoProfile", "-STA", "-Command", ps_cmd])
+    return jsonify({"ok": True})
 
 
 @app.route("/run", methods=["POST"])

@@ -186,12 +186,16 @@ def _draw_bar_text(draw, text, clip_w, bar_top, bar_bottom, max_size=120, min_si
         y += line_h + line_gap
 
 
-def render_with_text(clip_path, above_text, below_text, output_path, log_fn=print, hook=False, hook_offset=2.8, normalize_audio=False, hook_transition='none', cut_end_sec=0.0, hook_only=False, fg_zoom=1.0):
+def render_with_text(clip_path, above_text, below_text, output_path, log_fn=print, hook=False, hook_offset=2.8, normalize_audio=False, hook_transition='none', cut_end_sec=0.0, hook_only=False, fg_zoom=1.0, hook_above=None, hook_below=None):
     cap        = cv2.VideoCapture(clip_path)
     clip_w     = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     clip_h     = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-    total_dur  = cap.get(cv2.CAP_PROP_FRAME_COUNT) / cap.get(cv2.CAP_PROP_FPS)
+    frame_count = cap.get(cv2.CAP_PROP_FRAME_COUNT)
+    fps         = cap.get(cv2.CAP_PROP_FPS)
+    total_dur  = frame_count / fps if fps else 0.0
     cap.release()
+
+    log_fn(f"📏  Source: {clip_w}x{clip_h}  frames={frame_count:.0f}  fps={fps:.2f}  dur={total_dur:.3f}s")
 
     if not clip_w or not clip_h:
         log_fn("❌  Could not read clip dimensions.")
@@ -214,8 +218,28 @@ def render_with_text(clip_path, above_text, below_text, output_path, log_fn=prin
     tmp.close()
     overlay.save(tmp_path)
 
+    # Optional separate text overlay for the hook section
+    has_split_text = hook and (hook_above is not None or hook_below is not None)
+    hook_png_path  = None
+    if has_split_text:
+        _ha = hook_above if hook_above is not None else above_text
+        _hb = hook_below if hook_below is not None else below_text
+        hook_ov   = Image.new('RGBA', (clip_w, clip_h), (0, 0, 0, 0))
+        hook_draw = ImageDraw.Draw(hook_ov)
+        if _ha:
+            _draw_bar_text(hook_draw, _ha.upper(), clip_w, 0, top_bar_bottom)
+        if _hb:
+            _draw_bar_text(hook_draw, _hb.upper(), clip_w, bottom_bar_top, clip_h)
+        htmp          = tempfile.NamedTemporaryFile(suffix='.png', delete=False)
+        hook_png_path = htmp.name
+        htmp.close()
+        hook_ov.save(hook_png_path)
+
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
     log_fn("🎬  Encoding final clip...")
+    extra_tmp_files = []
+    if hook_png_path:
+        extra_tmp_files.append(hook_png_path)
 
     if normalize_audio:
         log_fn("🔊  Audio normalization: on (compressor + hard limiter)")
@@ -290,53 +314,155 @@ def render_with_text(clip_path, above_text, below_text, output_path, log_fn=prin
         log_fn(f"🪝  Hook: prepending last {hook_offset}s (from {hook_start:.2f}s){cut_note}")
 
         hv_end = f":end={effective_end}" if effective_end else ""
-        hv_trim = f"[0:v]trim=start={hook_start}{hv_end},setpts=PTS-STARTPTS[hv]"
-        ha_trim = f"[0:a]atrim=start={hook_start}{hv_end},asetpts=PTS-STARTPTS[ha]"
-        fv_trim = (f"[0:v]trim=end={effective_end},setpts=PTS-STARTPTS[fv]" if effective_end
-                   else "[0:v]setpts=PTS-STARTPTS[fv]")
-        fa_trim = (f"[0:a]atrim=end={effective_end},asetpts=PTS-STARTPTS[fa]" if effective_end
-                   else "[0:a]asetpts=PTS-STARTPTS[fa]")
 
         if hook_transition and hook_transition != 'none':
-            T = 0.5
+            T            = 0.5
             xfade_offset = round(max(0.0, hook_offset - T), 3)
             xfade_type   = _XFADE_MAP.get(hook_transition, hook_transition)
-            log_fn(f"✨  Transition: {hook_transition} ({T}s)")
+            log_fn(f"✨  Transition: {hook_transition} ({T}s)  hook_start={hook_start:.3f}s  xfade_offset={xfade_offset:.3f}s  fv_dur={clip_end:.3f}s  expected_out={(hook_offset + clip_end - T):.3f}s")
+
+            # Pre-extract the hook segment to a temp file so xfade has two truly independent
+            # inputs. A single-source split+xfade stalls the filter scheduler when the hook
+            # trim must discard 8+ seconds of frames before it yields output, causing the
+            # full-clip branch to receive a truncated stream (reproducible with zoom clips
+            # that have sparse keyframes).
+            tmp_hook_file = tempfile.NamedTemporaryFile(suffix='.mp4', delete=False)
+            tmp_hook      = tmp_hook_file.name
+            tmp_hook_file.close()
+            extra_tmp_files.append(tmp_hook)
+
+            if has_split_text:
+                # Bake hook text into the extracted segment so it fades out with the hook
+                hook_fc = (
+                    f"[0:v]trim=start={hook_start}{hv_end},setpts=PTS-STARTPTS[hv];"
+                    f"[hv][1:v]overlay=0:0[hv_text];"
+                    f"[0:a]atrim=start={hook_start}{hv_end},asetpts=PTS-STARTPTS[ha]"
+                )
+                hook_extract_inputs = ['-i', clip_path, '-i', hook_png_path]
+                hook_vmap = '[hv_text]'
+            else:
+                hook_fc = (
+                    f"[0:v]trim=start={hook_start}{hv_end},setpts=PTS-STARTPTS[hv];"
+                    f"[0:a]atrim=start={hook_start}{hv_end},asetpts=PTS-STARTPTS[ha]"
+                )
+                hook_extract_inputs = ['-i', clip_path]
+                hook_vmap = '[hv]'
+            hook_extract = subprocess.run(
+                [
+                    'ffmpeg', '-y',
+                    *hook_extract_inputs,
+                    '-filter_complex', hook_fc,
+                    '-map', hook_vmap, '-map', '[ha]',
+                    '-c:v', 'libx264', '-preset', 'ultrafast', '-pix_fmt', 'yuv420p',
+                    '-c:a', 'aac', '-b:a', '384k', '-ar', '48000',
+                    tmp_hook,
+                ],
+                stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, timeout=FFMPEG_TIMEOUT,
+            )
+            if hook_extract.returncode != 0:
+                log_fn("❌  Hook extraction failed: " + hook_extract.stderr.decode(errors='replace')[-400:])
+                return False
+
+            _hc = cv2.VideoCapture(tmp_hook)
+            _hf, _hfps = _hc.get(cv2.CAP_PROP_FRAME_COUNT), _hc.get(cv2.CAP_PROP_FPS)
+            _hc.release()
+            log_fn(f"🔍  tmp_hook: {_hf:.0f} frames @ {_hfps:.2f}fps = {_hf/_hfps if _hfps else 0:.3f}s")
+
+            # Direct xfade between independent files — no trim filter needed.
+            # Using -to on the clip_path input (if effective_end is set) to limit read
+            # duration without any filter-side truncation.
+            fv_input = ['-to', str(effective_end), '-i', clip_path] if effective_end else ['-i', clip_path]
             audio_tail = (
-                f"[ha][fa]acrossfade=d={T}[ca_pre];[ca_pre]acompressor=threshold=0.063:ratio=15:attack=100:release=800,alimiter=limit=0.65:level=disabled[ca]"
+                f"[0:a][1:a]acrossfade=d={T}[ca_pre];"
+                f"[ca_pre]acompressor=threshold=0.063:ratio=15:attack=100:release=800,alimiter=limit=0.65:level=disabled[ca]"
                 if normalize_audio else
-                f"[ha][fa]acrossfade=d={T}[ca]"
+                f"[0:a][1:a]acrossfade=d={T}[ca]"
             )
+            # With split text the hook text is already baked into tmp_hook; apply main
+            # text only once the hook ends so it doesn't bleed over the hook section.
+            text_enable = f":enable='gte(t,{hook_offset})'" if has_split_text else ""
             filter_complex = (
-                f"{hv_trim};{ha_trim};{fv_trim};{fa_trim};"
-                f"[hv][fv]xfade=transition={xfade_type}:duration={T}:offset={xfade_offset}[cv];"
+                f"[0:v][1:v]xfade=transition={xfade_type}:duration={T}:offset={xfade_offset}[cv];"
                 f"{audio_tail};"
-                f"[cv][1:v]overlay=0:0[outv]"
+                f"[cv][2:v]overlay=0:0{text_enable}[outv]"
             )
+            log_fn(f"🔍  filter_complex: {filter_complex}")
+            cmd = [
+                'ffmpeg', '-y',
+                '-i', tmp_hook,   # [0] hook segment (pre-extracted)
+                *fv_input,        # [1] full clip (optionally time-limited)
+                '-i', tmp_path,   # [2] main text PNG
+                '-filter_complex', filter_complex,
+                '-map', '[outv]',
+                '-map', '[ca]',
+                '-c:v', 'libx264', '-crf', '18',
+                '-profile:v', 'high', '-level:v', '4.2',
+                '-g', '30', '-keyint_min', '30',
+                '-preset', 'slow', '-pix_fmt', 'yuv420p',
+                '-c:a', 'aac', '-b:a', '384k', '-ar', '48000',
+                '-movflags', '+faststart',
+                output_path,
+            ]
         else:
+            split_v = "[0:v]split=2[hv_src][fv_src]"
+            split_a = "[0:a]asplit=2[ha_src][fa_src]"
+            hv_trim = f"[hv_src]trim=start={hook_start}{hv_end},setpts=PTS-STARTPTS[hv]"
+            ha_trim = f"[ha_src]atrim=start={hook_start}{hv_end},asetpts=PTS-STARTPTS[ha]"
+            fv_trim = (f"[fv_src]trim=end={effective_end},setpts=PTS-STARTPTS[fv]" if effective_end
+                       else "[fv_src]setpts=PTS-STARTPTS[fv]")
+            fa_trim = (f"[fa_src]atrim=end={effective_end},asetpts=PTS-STARTPTS[fa]" if effective_end
+                       else "[fa_src]asetpts=PTS-STARTPTS[fa]")
             audio_tail = "[ha][fa]concat=n=2:v=0:a=1[ca_pre];[ca_pre]acompressor=threshold=0.063:ratio=15:attack=100:release=800,alimiter=limit=0.65:level=disabled[ca]" if normalize_audio \
                     else "[ha][fa]concat=n=2:v=0:a=1[ca]"
-            filter_complex = (
-                f"{hv_trim};{ha_trim};{fv_trim};{fa_trim};"
-                f"[hv][fv]concat=n=2:v=1:a=0[cv];"
-                f"{audio_tail};"
-                f"[cv][1:v]overlay=0:0[outv]"
-            )
-        cmd = [
-            'ffmpeg', '-y',
-            '-i', clip_path,
-            '-i', tmp_path,
-            '-filter_complex', filter_complex,
-            '-map', '[outv]',
-            '-map', '[ca]',
-            '-c:v', 'libx264', '-crf', '18',
-            '-profile:v', 'high', '-level:v', '4.2',
-            '-g', '30', '-keyint_min', '30',
-            '-preset', 'slow', '-pix_fmt', 'yuv420p',
-            '-c:a', 'aac', '-b:a', '384k', '-ar', '48000',
-            '-movflags', '+faststart',
-            output_path,
-        ]
+            if has_split_text:
+                # hook text ([1:v]) on hook portion, main text ([2:v]) on main portion
+                filter_complex = (
+                    f"{split_v};{split_a};"
+                    f"{hv_trim};{ha_trim};{fv_trim};{fa_trim};"
+                    f"[hv][fv]concat=n=2:v=1:a=0[cv_raw];"
+                    f"{audio_tail};"
+                    f"[cv_raw][1:v]overlay=0:0:enable='lt(t,{hook_offset})'[with_hook_text];"
+                    f"[with_hook_text][2:v]overlay=0:0:enable='gte(t,{hook_offset})'[outv]"
+                )
+                cmd = [
+                    'ffmpeg', '-y',
+                    '-i', clip_path,
+                    '-i', hook_png_path,  # [1:v] hook text
+                    '-i', tmp_path,       # [2:v] main text
+                    '-filter_complex', filter_complex,
+                    '-map', '[outv]',
+                    '-map', '[ca]',
+                    '-c:v', 'libx264', '-crf', '18',
+                    '-profile:v', 'high', '-level:v', '4.2',
+                    '-g', '30', '-keyint_min', '30',
+                    '-preset', 'slow', '-pix_fmt', 'yuv420p',
+                    '-c:a', 'aac', '-b:a', '384k', '-ar', '48000',
+                    '-movflags', '+faststart',
+                    output_path,
+                ]
+            else:
+                filter_complex = (
+                    f"{split_v};{split_a};"
+                    f"{hv_trim};{ha_trim};{fv_trim};{fa_trim};"
+                    f"[hv][fv]concat=n=2:v=1:a=0[cv];"
+                    f"{audio_tail};"
+                    f"[cv][1:v]overlay=0:0[outv]"
+                )
+                cmd = [
+                    'ffmpeg', '-y',
+                    '-i', clip_path,
+                    '-i', tmp_path,
+                    '-filter_complex', filter_complex,
+                    '-map', '[outv]',
+                    '-map', '[ca]',
+                    '-c:v', 'libx264', '-crf', '18',
+                    '-profile:v', 'high', '-level:v', '4.2',
+                    '-g', '30', '-keyint_min', '30',
+                    '-preset', 'slow', '-pix_fmt', 'yuv420p',
+                    '-c:a', 'aac', '-b:a', '384k', '-ar', '48000',
+                    '-movflags', '+faststart',
+                    output_path,
+                ]
     else:
         af_args = ['-af', 'acompressor=threshold=0.063:ratio=15:attack=100:release=800,alimiter=limit=0.65:level=disabled'] if normalize_audio else []
         t_args  = ['-t', str(round(max(0.1, total_dur - cut_end_sec), 3))] if cut_end_sec > 0 else []
@@ -362,6 +488,10 @@ def render_with_text(clip_path, above_text, below_text, output_path, log_fn=prin
         if result.returncode != 0:
             log_fn("❌  FFmpeg error: " + result.stderr.decode(errors='replace')[-400:])
             return False
+        _oc = cv2.VideoCapture(output_path)
+        _of, _ofps = _oc.get(cv2.CAP_PROP_FRAME_COUNT), _oc.get(cv2.CAP_PROP_FPS)
+        _oc.release()
+        log_fn(f"🔍  Output: {_of:.0f} frames @ {_ofps:.2f}fps = {_of/_ofps if _ofps else 0:.3f}s")
         log_fn("✅  Final clip ready.")
         return True
     except subprocess.TimeoutExpired:
@@ -371,10 +501,11 @@ def render_with_text(clip_path, above_text, below_text, output_path, log_fn=prin
         log_fn(f"❌  {e}")
         return False
     finally:
-        try:
-            os.unlink(tmp_path)
-        except Exception:
-            pass
+        for f in [tmp_path] + extra_tmp_files:
+            try:
+                os.unlink(f)
+            except Exception:
+                pass
 
 
 def render_replay(
@@ -850,9 +981,68 @@ def _concat_segments(segments, output_path, log_fn):
                 pass
 
 
+def _apply_per_clip_texts(video_path, segments, output_path, fg_zoom, log_fn, tmp_files):
+    """Overlay per-segment text using time-based FFmpeg enable conditions."""
+    cap = cv2.VideoCapture(video_path)
+    vid_w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    vid_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    cap.release()
+
+    top_bar_bottom, _ = _bar_regions(vid_w, vid_h, fg_zoom)
+
+    # Collect text segments with their timestamps
+    text_segs = []
+    t = 0.0
+    for seg in segments:
+        t_end = t + seg['duration']
+        txt = (seg.get('seg_text') or '').strip()
+        if txt:
+            text_segs.append((t, t_end, txt))
+        t = t_end
+
+    if not text_segs:
+        return True  # nothing to do
+
+    ffmpeg_inputs = [video_path]
+    filter_parts  = []
+    prev_tag      = '[0:v]'
+
+    for i, (t_start, t_end, txt) in enumerate(text_segs):
+        ov = Image.new('RGBA', (vid_w, vid_h), (0, 0, 0, 0))
+        _draw_bar_text(ImageDraw.Draw(ov), txt.upper(), vid_w, 0, top_bar_bottom)
+        png = tempfile.NamedTemporaryFile(suffix='.png', delete=False)
+        ov.save(png.name); png.close()
+        tmp_files.append(png.name)
+        ffmpeg_inputs.append(png.name)
+
+        inp_idx = len(ffmpeg_inputs) - 1
+        out_tag = '[outv]' if i == len(text_segs) - 1 else f'[vtxt{i}]'
+        filter_parts.append(
+            f"{prev_tag}[{inp_idx}:v]overlay=0:0:enable='between(t,{t_start:.3f},{t_end:.3f})'{out_tag}"
+        )
+        prev_tag = out_tag
+
+    inputs_flat = []
+    for p in ffmpeg_inputs:
+        inputs_flat += ['-i', p]
+
+    cmd = [
+        'ffmpeg', '-y', *inputs_flat,
+        '-filter_complex', ';'.join(filter_parts),
+        '-map', '[outv]', '-map', '0:a',
+        '-c:v', 'libx264', '-c:a', 'aac', '-b:a', '320k', '-preset', 'ultrafast',
+        output_path,
+    ]
+    r = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, timeout=FFMPEG_TIMEOUT)
+    if r.returncode != 0:
+        log_fn("❌  Per-clip text overlay failed: " + r.stderr.decode(errors='replace')[-400:])
+        return False
+    return True
+
+
 def render_montage(clips_info, top_text, transition, output_path, log_fn=print, logo_path=None, black_top_bar=False, fg_zoom=1.0):
     """
-    clips_info:    list of {path, hook_offset, end_early}
+    clips_info:    list of {path, hook_offset, end_early, top_text (optional per-clip override)}
     transition:    'cut' | 'fade' | 'crossfade' | 'flash'
     logo_path:     optional image to fill the bottom bar
     black_top_bar: if True, paint the top bar solid black
@@ -934,18 +1124,21 @@ def render_montage(clips_info, top_text, transition, output_path, log_fn=print, 
                 log_fn(f"⚠️  Clip {i+1} extraction timed out.")
                 return False
             seg_transition = info.get('transition') or transition
-            segments.append({'path': seg_path, 'duration': seg_dur, 'transition': seg_transition})
+            seg_text       = (info.get('top_text') or '').strip() or top_text
+            segments.append({'path': seg_path, 'duration': seg_dur, 'transition': seg_transition, 'seg_text': seg_text})
 
         if len(segments) < 2:
             log_fn("❌  Need at least 2 valid clips for a montage.")
             return False
 
-        use_logo = bool(logo_path and os.path.exists(logo_path))
-        use_text = bool(top_text and top_text.strip())
-        use_bars = use_logo or black_top_bar
+        use_logo      = bool(logo_path and os.path.exists(logo_path))
+        use_text      = bool(top_text and top_text.strip())
+        has_per_clip  = any((info.get('top_text') or '').strip() for info in clips_info)
+        use_text_step = use_text or has_per_clip
+        use_bars      = use_logo or black_top_bar
 
         # Route: concat → [bars/logo] → [text] → output
-        concat_out = _tmp() if (use_bars or use_text) else output_path
+        concat_out = _tmp() if (use_bars or use_text_step) else output_path
 
         log_fn(f"🎬  Joining {len(segments)} clips with '{transition}' transition...")
         if not _concat_segments(segments, concat_out, log_fn):
@@ -999,10 +1192,15 @@ def render_montage(clips_info, top_text, transition, output_path, log_fn=print, 
                 return False
             current = bars_out
 
-        if use_text:
-            log_fn("🎨  Burning top text...")
-            if not render_with_text(current, top_text, None, output_path, log_fn=log_fn, fg_zoom=fg_zoom):
-                return False
+        if use_text_step:
+            if has_per_clip:
+                log_fn("🎨  Burning per-clip text overlays...")
+                if not _apply_per_clip_texts(current, segments, output_path, fg_zoom, log_fn, tmp_files):
+                    return False
+            else:
+                log_fn("🎨  Burning top text...")
+                if not render_with_text(current, top_text, None, output_path, log_fn=log_fn, fg_zoom=fg_zoom):
+                    return False
 
         log_fn("✅  Montage complete.")
         return True

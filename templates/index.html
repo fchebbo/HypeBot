@@ -434,7 +434,7 @@
       color: var(--text);
       letter-spacing: 0.04em;
     }
-    .clip-toggle { display: flex; gap: 6px; }
+    .clip-toggle { display: flex; flex-wrap: wrap; gap: 4px; }
     .toggle-btn {
       background: none;
       border: 1px solid var(--border);
@@ -442,9 +442,9 @@
       color: var(--muted);
       cursor: pointer;
       font-family: var(--display);
-      font-size: 12px;
+      font-size: 11px;
       letter-spacing: 0.06em;
-      padding: 3px 10px;
+      padding: 3px 7px;
       transition: color 0.15s, border-color 0.15s, background 0.15s;
     }
     .toggle-btn.active {
@@ -1105,6 +1105,26 @@
     return p.split('/').map(encodeURIComponent).join('/');
   }
 
+  async function copyClip(relFile, btn) {
+    const orig = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = '...';
+    const res = await fetch('/copy-clip', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ file: relFile }),
+    });
+    if (res.ok) {
+      btn.textContent = '✓';
+      setTimeout(() => { btn.textContent = orig; btn.disabled = false; }, 1500);
+    } else {
+      const data = await res.json().catch(() => ({}));
+      console.warn(`[HypeBot] copyClip: ${data.error || res.status} — ${relFile}`);
+      btn.textContent = '✕';
+      setTimeout(() => { btn.textContent = orig; btn.disabled = false; }, 1500);
+    }
+  }
+
   function makeVideoEl(src, thumb, bustCache) {
     const video = document.createElement('video');
     const qs = bustCache ? `?t=${Date.now()}` : '';
@@ -1201,18 +1221,32 @@
       toggle.appendChild(skipBtn);
     }
 
+    // ── copy to clipboard ──
+    const copyVertBtn = document.createElement('button');
+    copyVertBtn.className = 'toggle-btn';
+    copyVertBtn.textContent = '📋';
+    copyVertBtn.title = 'Copy vertical clip to clipboard';
+    copyVertBtn.addEventListener('click', () => copyClip(`clips/${session}/vertical/${clip.name}_vertical.mp4`, copyVertBtn));
+    toggle.appendChild(copyVertBtn);
+
+    const copyOrigBtn = document.createElement('button');
+    copyOrigBtn.className = 'toggle-btn';
+    copyOrigBtn.textContent = '📋16:9';
+    copyOrigBtn.title = 'Copy original (16:9) to clipboard';
+    copyOrigBtn.addEventListener('click', () => copyClip(`clips/${session}/original/${clip.name}_original.mp4`, copyOrigBtn));
+    toggle.appendChild(copyOrigBtn);
+
+    footer.appendChild(toggle);
+
     // ── add text toggle ──
     const addTextBtn = document.createElement('button');
     addTextBtn.className = 'toggle-btn';
     addTextBtn.textContent = 'ADD TEXT';
-    addTextBtn.style.marginLeft = 'auto';
+    addTextBtn.style.alignSelf = 'flex-end';
     addTextBtn.addEventListener('click', () => {
       const open = textPanel.classList.toggle('open');
       addTextBtn.classList.toggle('active', open);
     });
-    toggle.appendChild(addTextBtn);
-
-    footer.appendChild(toggle);
 
     // ── text panel ──
     const textPanel = document.createElement('div');
@@ -1274,10 +1308,22 @@
     hookOnlyRow.appendChild(hookOnlyCheck);
     hookOnlyRow.appendChild(hookOnlyLabel);
 
+    const hookAboveInput = document.createElement('input');
+    hookAboveInput.className = 'hook-input';
+    hookAboveInput.placeholder = '↑ Hook ABOVE text (e.g. HOLY GUITAR)';
+    hookAboveInput.style.display = 'none';
+
+    const hookBelowInput = document.createElement('input');
+    hookBelowInput.className = 'hook-input';
+    hookBelowInput.placeholder = '↓ Hook BELOW text';
+    hookBelowInput.style.display = 'none';
+
     hookCheck.addEventListener('change', () => {
       hookOffsetInput.disabled = !hookCheck.checked;
       transitionSelect.disabled = !hookCheck.checked;
       hookOnlyCheck.disabled = !hookCheck.checked;
+      hookAboveInput.style.display = hookCheck.checked ? '' : 'none';
+      hookBelowInput.style.display = hookCheck.checked ? '' : 'none';
       if (!hookCheck.checked) hookOnlyCheck.checked = false;
     });
 
@@ -1345,11 +1391,11 @@
 
     const aboveInput = document.createElement('input');
     aboveInput.className = 'hook-input';
-    aboveInput.placeholder = 'ABOVE text (optional)';
+    aboveInput.placeholder = 'Full clip ABOVE text (optional)';
 
     const belowInput = document.createElement('input');
     belowInput.className = 'hook-input';
-    belowInput.placeholder = 'BELOW text (optional)';
+    belowInput.placeholder = 'Full clip BELOW text (optional)';
 
     const renderBtn = document.createElement('button');
     renderBtn.className = 'render-btn';
@@ -1376,6 +1422,8 @@
             hook_offset:     parseFloat(hookOffsetInput.value) || 2.8,
             hook_transition: transitionSelect.value,
             hook_only:       hookOnlyCheck.checked,
+            hook_above:      hookAboveInput.value.trim(),
+            hook_below:      hookBelowInput.value.trim(),
             extend_sec:      parseFloat(extendInput.value) || 0,
             cut_end_sec:     parseFloat(cutInput.value) || 0,
             normalize_audio: normCheck.checked,
@@ -1411,6 +1459,8 @@
 
     textPanel.appendChild(hookRow);
     textPanel.appendChild(hookOnlyRow);
+    textPanel.appendChild(hookAboveInput);
+    textPanel.appendChild(hookBelowInput);
     textPanel.appendChild(extendRow);
     textPanel.appendChild(cutRow);
     textPanel.appendChild(normRow);
@@ -1487,6 +1537,7 @@
     textPanel.appendChild(belowInput);
     textPanel.appendChild(renderBtn);
     textPanel.appendChild(status);
+    footer.appendChild(addTextBtn);
     footer.appendChild(textPanel);
 
     card.appendChild(wrap);
@@ -1514,6 +1565,13 @@
     const parts = path.replace('\\', '/').split('/');
     nameEl.textContent = formatClipName(parts[parts.length - 1].replace('_final.mp4', ''));
     footer.appendChild(nameEl);
+
+    const finalCopyBtn = document.createElement('button');
+    finalCopyBtn.className = 'toggle-btn';
+    finalCopyBtn.textContent = '📋';
+    finalCopyBtn.title = 'Copy final clip to clipboard';
+    finalCopyBtn.addEventListener('click', () => copyClip(`clips/${path}`, finalCopyBtn));
+    footer.appendChild(finalCopyBtn);
 
     card.appendChild(wrap);
     card.appendChild(footer);
