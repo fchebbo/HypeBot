@@ -1985,3 +1985,211 @@ def render_dankify(clip_path, hook_start, output_path, log_fn=print):
                 os.unlink(f)
             except Exception:
                 pass
+
+
+# ── Hook + Slow-Mo ────────────────────────────────────────────────────────────
+
+def render_hook_slowmo(clip_path, hook_offset, slowmo_factor, output_path, zoom=False, above_text="", above_text_2="", slowmo_start=0.0, slowmo_end=None, transition="cut", log_fn=print):
+    """Play the hook (last hook_offset seconds) at normal speed, then replay the slowmo_start→slowmo_end
+    window (offsets from hook start) in slow motion. Defaults to replaying the full hook."""
+    cap       = cv2.VideoCapture(clip_path)
+    clip_w    = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    clip_h    = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    fps       = cap.get(cv2.CAP_PROP_FPS) or 30
+    total_dur = cap.get(cv2.CAP_PROP_FRAME_COUNT) / fps
+    cap.release()
+
+    if not clip_w or not clip_h:
+        log_fn("❌  Could not read clip dimensions.")
+        return False
+
+    if slowmo_end is None:
+        slowmo_end = hook_offset
+    slowmo_start = max(0.0, min(float(slowmo_start), hook_offset))
+    slowmo_end   = max(slowmo_start + 0.1, min(float(slowmo_end), hook_offset))
+
+    hook_start = round(max(0.0, total_dur - hook_offset), 3)
+    pts_factor = round(1.0 / slowmo_factor, 4)
+
+    smo_abs_start = round(hook_start + slowmo_start, 3)
+    smo_abs_end   = round(hook_start + slowmo_end,   3)
+
+    # Zoom: scale up 1.5×, crop back to original size from center
+    zoom_w = int(clip_w * 1.5) & ~1
+    zoom_h = int(clip_h * 1.5) & ~1
+    crop_x = (zoom_w - clip_w) // 2
+    crop_y = (zoom_h - clip_h) // 2
+    zoom_vf = f",scale={zoom_w}:{zoom_h},crop={clip_w}:{clip_h}:{crop_x}:{crop_y}" if zoom else ""
+
+    tmp = []
+
+    def _tmp_mp4():
+        t = tempfile.NamedTemporaryFile(suffix='.mp4', delete=False)
+        t.close()
+        tmp.append(t.name)
+        return t.name
+
+    def _run_hs(cmd, label):
+        r = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, timeout=FFMPEG_TIMEOUT)
+        if r.returncode != 0:
+            log_fn(f"❌  {label}: " + r.stderr.decode(errors='replace')[-400:])
+            return False
+        return True
+
+    try:
+        zoom_note = "  [zoom 1.5×]" if zoom else ""
+
+        # --- Part 1: hook at normal speed ---
+        log_fn(f"🎬  Hook (normal): last {hook_offset}s from {hook_start:.2f}s...{zoom_note}")
+        part1 = _tmp_mp4()
+        fc1 = (
+            f"[0:v]trim=start={hook_start},setpts=PTS-STARTPTS{zoom_vf}[outv];"
+            f"[0:a]atrim=start={hook_start},asetpts=PTS-STARTPTS[outa]"
+        )
+        if not _run_hs([
+            'ffmpeg', '-y', '-i', clip_path,
+            '-filter_complex', fc1,
+            '-map', '[outv]', '-map', '[outa]',
+            '-c:v', 'libx264', '-c:a', 'aac', '-b:a', '320k', '-preset', 'ultrafast', '-r', '30',
+            part1,
+        ], "Hook normal"): return False
+
+        # --- Part 2: full hook replayed, with slow-mo only in the specified zone ---
+        window_dur = round(slowmo_end - slowmo_start, 3)
+        log_fn(f"🐢  Replay: full hook, slowed in [{slowmo_start}s→{slowmo_end}s] at {slowmo_factor}×...{zoom_note}")
+
+        # atempo range is [0.5, 100] — chain two filters for speeds below 0.5
+        if slowmo_factor >= 0.5:
+            atempo_chain = f"atempo={slowmo_factor}"
+        else:
+            half = round(slowmo_factor * 2, 4)
+            atempo_chain = f"atempo=0.5,atempo={half}"
+
+        replay_segs = []
+
+        def _extract(ss, end, vf_extra, aspeed, label):
+            seg = _tmp_mp4()
+            replay_segs.append(seg)
+            end_clause = f":end={end}" if end is not None else ""
+            fc = (
+                f"[0:v]trim=start={ss}{end_clause},setpts={'1' if aspeed == 1.0 else pts_factor}*(PTS-STARTPTS){vf_extra}[outv];"
+                f"[0:a]atrim=start={ss}{end_clause},asetpts=PTS-STARTPTS"
+                + (f",{atempo_chain}[outa]" if aspeed != 1.0 else "[outa]")
+            )
+            return _run_hs([
+                'ffmpeg', '-y', '-i', clip_path,
+                '-filter_complex', fc,
+                '-map', '[outv]', '-map', '[outa]',
+                '-c:v', 'libx264', '-c:a', 'aac', '-b:a', '320k', '-preset', 'ultrafast', '-r', '30',
+                seg,
+            ], label)
+
+        # Seg A: hook start → slowmo zone start (normal speed)
+        if slowmo_start > 0.01:
+            if not _extract(hook_start, smo_abs_start, zoom_vf, 1.0, "Replay A (pre-zone)"): return False
+
+        # Seg B: slowmo zone (slow speed)
+        if not _extract(smo_abs_start, smo_abs_end, zoom_vf, slowmo_factor, "Replay B (slow-mo zone)"): return False
+
+        # Seg C: slowmo zone end → hook end (normal speed)
+        if (hook_offset - slowmo_end) > 0.01:
+            if not _extract(smo_abs_end, None, zoom_vf, 1.0, "Replay C (post-zone)"): return False
+
+        # Concat replay segments into part2
+        if len(replay_segs) == 1:
+            part2 = replay_segs[0]
+        else:
+            part2 = _tmp_mp4()
+            concat_r = tempfile.NamedTemporaryFile(suffix='.txt', delete=False, mode='w', encoding='utf-8')
+            for s in replay_segs:
+                concat_r.write(f"file '{s}'\n")
+            concat_r_path = concat_r.name
+            concat_r.close()
+            tmp.append(concat_r_path)
+            if not _run_hs([
+                'ffmpeg', '-y',
+                '-f', 'concat', '-safe', '0', '-i', concat_r_path,
+                '-c:v', 'libx264', '-c:a', 'aac', '-b:a', '320k', '-preset', 'ultrafast',
+                part2,
+            ], "Replay concat"): return False
+
+        # --- Bake captions into each part individually ---
+        def _bake_text(src, text, label):
+            top_bar_bottom, _ = _bar_regions(clip_w, clip_h)
+            ov = Image.new('RGBA', (clip_w, clip_h), (0, 0, 0, 0))
+            _draw_bar_text(ImageDraw.Draw(ov), text.upper(), clip_w, 0, top_bar_bottom)
+            png = tempfile.NamedTemporaryFile(suffix='.png', delete=False)
+            ov.save(png.name); png.close(); tmp.append(png.name)
+            out = _tmp_mp4()
+            ok = _run_hs([
+                'ffmpeg', '-y', '-i', src, '-i', png.name,
+                '-filter_complex', '[0:v][1:v]overlay=0:0[outv]',
+                '-map', '[outv]', '-map', '0:a',
+                '-c:v', 'libx264', '-c:a', 'aac', '-b:a', '320k', '-preset', 'ultrafast',
+                out,
+            ], label)
+            return out if ok else None
+
+        if above_text:
+            log_fn("🎨  Part 1 caption...")
+            result = _bake_text(part1, above_text, "Part1 text")
+            if result is None: return False
+            part1 = result
+
+        if above_text_2:
+            log_fn("🎨  Part 2 caption...")
+            result = _bake_text(part2, above_text_2, "Part2 text")
+            if result is None: return False
+            part2 = result
+
+        # --- Join part1 + part2 with optional xfade transition ---
+        XFADE_DUR = 0.3
+        use_xfade = transition not in ('cut', 'none', '', None)
+
+        os.makedirs(os.path.dirname(output_path), exist_ok=True)
+
+        if use_xfade:
+            xfade_type = _XFADE_MAP.get(transition, transition)
+            cap_p1 = cv2.VideoCapture(part1)
+            p1_dur = cap_p1.get(cv2.CAP_PROP_FRAME_COUNT) / (cap_p1.get(cv2.CAP_PROP_FPS) or 30)
+            cap_p1.release()
+            xfade_offset = round(max(0.0, p1_dur - XFADE_DUR), 3)
+            log_fn(f"✨  Transition ({xfade_type}, {XFADE_DUR}s) at {xfade_offset:.3f}s...")
+            fc = (
+                f"[0:v][1:v]xfade=transition={xfade_type}:duration={XFADE_DUR}:offset={xfade_offset}[outv];"
+                f"[0:a][1:a]acrossfade=d={XFADE_DUR}[xa]"
+            )
+            join_cmd = ['ffmpeg', '-y', '-i', part1, '-i', part2,
+                        '-filter_complex', fc, '-map', '[outv]', '-map', '[xa]']
+        else:
+            log_fn("🔗  Joining hook + slow-mo...")
+            concat_f = tempfile.NamedTemporaryFile(suffix='.txt', delete=False, mode='w', encoding='utf-8')
+            concat_f.write(f"file '{part1}'\n")
+            concat_f.write(f"file '{part2}'\n")
+            concat_path = concat_f.name
+            concat_f.close()
+            tmp.append(concat_path)
+            join_cmd = ['ffmpeg', '-y', '-f', 'concat', '-safe', '0', '-i', concat_path]
+
+        if not _run_hs(join_cmd + [
+            '-c:v', 'libx264', '-crf', '18',
+            '-profile:v', 'high', '-level:v', '4.2',
+            '-g', '30', '-keyint_min', '30',
+            '-preset', 'slow', '-pix_fmt', 'yuv420p',
+            '-c:a', 'aac', '-b:a', '384k', '-ar', '48000',
+            '-movflags', '+faststart',
+            output_path,
+        ], "Final encode"): return False
+
+        log_fn("✅  Hook + slow-mo ready!")
+        return True
+
+    except Exception as e:
+        log_fn(f"❌  {e}")
+        return False
+    finally:
+        for f in tmp:
+            try:
+                os.unlink(f)
+            except Exception:
+                pass

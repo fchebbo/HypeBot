@@ -10,7 +10,7 @@ import queue
 import subprocess
 import yt_dlp
 from detector import detect_ko_events, cut_clips, cut_extended_vertical, cut_manual_clip
-from renderer import render_with_text, render_stitch, render_replay, render_montage, render_dankify, render_fade_to_text, render_hype_reel, render_beat_sync
+from renderer import render_with_text, render_stitch, render_replay, render_montage, render_dankify, render_fade_to_text, render_hype_reel, render_beat_sync, render_hook_slowmo
 
 app = Flask(__name__)
 log_queue = queue.Queue()
@@ -335,6 +335,59 @@ def render_text_route():
     if ok:
         return jsonify({"ok": True, "path": output_rel, "logs": logs})
     return jsonify({"ok": False, "logs": logs}), 500
+
+
+@app.route("/hook-slowmo")
+def hook_slowmo_page():
+    return render_template("hookslomo.html")
+
+
+@app.route("/run-hook-slowmo", methods=["POST"])
+def run_hook_slowmo():
+    data          = request.get_json()
+    clip_rel      = data.get("clip", "").strip()
+    hook_offset   = float(data.get("hook_offset", 3.0))
+    slowmo_factor = float(data.get("slowmo_factor", 0.5))
+    zoom          = bool(data.get("zoom", False))
+    above_text    = data.get("above_text",   "").strip()
+    above_text_2  = data.get("above_text_2", "").strip()
+    slowmo_start  = float(data.get("slowmo_start", 0.0))
+    slowmo_end    = float(data.get("slowmo_end",   hook_offset))
+    transition    = data.get("transition", "cut").strip()
+
+    if not clip_rel:
+        return jsonify({"error": "clip is required"}), 400
+
+    clips_root = os.path.abspath("clips")
+    clip_path  = os.path.join(clips_root, clip_rel.replace("/", os.sep))
+    if not os.path.exists(clip_path):
+        return jsonify({"error": "Clip not found"}), 404
+
+    parts      = clip_rel.replace("\\", "/").split("/")
+    session    = parts[0]
+    orig_name  = parts[-1]
+    final_name = orig_name.replace("_vertical.mp4", "_hookslomo.mp4")
+    if final_name == orig_name:
+        final_name = os.path.splitext(orig_name)[0] + "_hookslomo.mp4"
+
+    finals_dir  = os.path.join(clips_root, session, "finals")
+    output_path = os.path.join(finals_dir, final_name)
+    output_rel  = f"{session}/finals/{final_name}"
+
+    logs = []
+    def capture(msg):
+        logs.append(msg)
+        log(msg)
+
+    def do_render():
+        ok = render_hook_slowmo(clip_path, hook_offset, slowmo_factor, output_path, zoom=zoom, above_text=above_text, above_text_2=above_text_2, slowmo_start=slowmo_start, slowmo_end=slowmo_end, transition=transition, log_fn=capture)
+        if ok:
+            log(f"__hookslomo_done__:{output_rel}")
+        else:
+            log("__hookslomo_failed__")
+
+    threading.Thread(target=do_render, daemon=True).start()
+    return jsonify({"status": "started"})
 
 
 @app.route("/replay")
