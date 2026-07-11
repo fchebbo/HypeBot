@@ -481,6 +481,16 @@ def upscale_to_4k(input_path, output_path, log_fn=print):
                 pass
 
 
+def get_clip_duration(video_path):
+    cap = cv2.VideoCapture(video_path)
+    fps = cap.get(cv2.CAP_PROP_FPS)
+    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    cap.release()
+    if not fps:
+        return None
+    return total_frames / fps
+
+
 def cut_extended_vertical(video_path, ko_timestamp, extend_sec, output_path, log_fn=print, fg_zoom=1.0, explicit_start=None, base_duration=None, zoom_end_mode="none", zoom_end_sec=0.0):
     cap = cv2.VideoCapture(video_path)
     src_width  = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))

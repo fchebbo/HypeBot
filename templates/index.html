@@ -747,7 +747,7 @@
     <div class="review-top">
       <span class="section-heading">CLIPS</span>
       <div class="session-tabs" id="sessionTabs"></div>
-      <button class="icon-btn" onclick="loadClips(null)" title="Refresh">↻</button>
+      <button class="icon-btn" onclick="loadClips(currentSessionIdx >= 0 ? allSessions[currentSessionIdx].title : null)" title="Refresh">↻</button>
       <button class="icon-btn" id="thumbsBtn" onclick="generateThumbs()" title="Generate thumbnails for this session" style="font-size:14px;letter-spacing:0.06em;font-family:var(--display)">THUMBS</button>
     </div>
     <div class="session-meta" id="sessionMeta" style="display:none"></div>
@@ -789,7 +789,7 @@
     return parseFloat(s);
   }
   let allSessions = [];
-  let currentSessionIdx = 0;
+  let currentSessionIdx = -1;
   let currentFilter = 'all';
 
   // ── mode toggle ──────────────────────────────────────────────
@@ -946,7 +946,7 @@
   }
 
   // ── clip review ───────────────────────────────────────────────
-  async function loadClips(autoSession) {
+  async function loadClips(autoSession, scroll = true) {
     const res  = await fetch('/clips-list');
     const data = await res.json();
     allSessions = data.sessions;
@@ -957,20 +957,33 @@
     review.classList.add('show');
 
     if (allSessions.length === 0) {
+      currentSessionIdx = -1;
       document.getElementById('clipsGrid').innerHTML =
         '<div class="empty-state">No clips found. Generate some first.</div>';
       return;
     }
 
-    let idx = 0;
     if (autoSession) {
       const found = allSessions.findIndex(s => s.title === autoSession);
-      if (found >= 0) idx = found;
+      if (found >= 0) {
+        selectSession(found);
+        if (scroll) review.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        return;
+      }
     }
 
-    selectSession(idx);
-    review.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    // No specific session requested — show the tabs but don't auto-pick one
+    currentSessionIdx = -1;
+    document.querySelectorAll('.session-tab').forEach(b => b.classList.remove('active'));
+    document.getElementById('clipsGrid').innerHTML =
+      '<div class="empty-state">Select a session above to review clips.</div>';
+    document.getElementById('finalsGrid').style.display = 'none';
+    document.getElementById('sessionMeta').style.display = 'none';
+    document.getElementById('manualCutSection').style.display = 'none';
+    if (scroll) review.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }
+
+  document.addEventListener('DOMContentLoaded', () => loadClips(null, false));
 
   function renderSessionTabs() {
     const tabs = document.getElementById('sessionTabs');
@@ -1428,6 +1441,8 @@
             cut_end_sec:     parseFloat(cutInput.value) || 0,
             normalize_audio: normCheck.checked,
             zoom:            zoomCheck.checked,
+            zoom_factor:     zoomCheck.checked ? (parseFloat(zoomFactorInput.value) || 1.5) : 1.5,
+            zoom_from_original: zoomCheck.checked && zoomSourceCheck.checked,
             zoom_end_mode:   zoomCheck.checked ? zoomEndSelect.value : 'none',
             zoom_end_sec:    zoomCheck.checked ? (parseFloat(zoomEndSecInput.value) || 2) : 0,
           }),
@@ -1472,10 +1487,38 @@
     zoomCheck.id = `zoom-${clip.name}`;
     const zoomLabel = document.createElement('label');
     zoomLabel.htmlFor = `zoom-${clip.name}`;
-    zoomLabel.textContent = 'Zoom in 1.5× (re-cuts from VOD)';
+    zoomLabel.textContent = 'Zoom in';
+    const zoomFactorInput = document.createElement('input');
+    zoomFactorInput.className = 'hook-offset-input';
+    zoomFactorInput.type = 'number';
+    zoomFactorInput.placeholder = '1.5';
+    zoomFactorInput.min = '1';
+    zoomFactorInput.max = '5';
+    zoomFactorInput.step = '0.1';
+    zoomFactorInput.title = 'Custom zoom factor (blank = 1.5×)';
+    zoomFactorInput.style.width = '60px';
+    const zoomFactorUnit = document.createElement('span');
+    zoomFactorUnit.textContent = '× (re-cuts from VOD, blank = 1.5×)';
+    zoomFactorUnit.style.cssText = 'font-size:11px;color:var(--muted);';
     zoomRow.appendChild(zoomCheck);
     zoomRow.appendChild(zoomLabel);
+    zoomRow.appendChild(zoomFactorInput);
+    zoomRow.appendChild(zoomFactorUnit);
     textPanel.appendChild(zoomRow);
+
+    const zoomSourceRow = document.createElement('div');
+    zoomSourceRow.className = 'hook-row';
+    zoomSourceRow.style.display = 'none';
+    const zoomSourceCheck = document.createElement('input');
+    zoomSourceCheck.type = 'checkbox';
+    zoomSourceCheck.id = `zoom-src-${clip.name}`;
+    const zoomSourceLabel = document.createElement('label');
+    zoomSourceLabel.htmlFor = `zoom-src-${clip.name}`;
+    zoomSourceLabel.textContent = 'Zoom from Original Clip';
+    zoomSourceLabel.title = 'Zoom the already-cut 16:9 clip instead of re-cutting from the VOD — avoids rare timestamp drift, but extend won\'t have extra footage available';
+    zoomSourceRow.appendChild(zoomSourceCheck);
+    zoomSourceRow.appendChild(zoomSourceLabel);
+    textPanel.appendChild(zoomSourceRow);
 
     const zoomEndRow = document.createElement('div');
     zoomEndRow.className = 'extend-row';
@@ -1520,10 +1563,12 @@
 
     zoomCheck.addEventListener('change', () => {
       zoomEndRow.style.display = zoomCheck.checked ? '' : 'none';
+      zoomSourceRow.style.display = zoomCheck.checked ? '' : 'none';
       if (!zoomCheck.checked) {
         zoomEndSelect.value = 'none';
         zoomEndSecInput.style.display = 'none';
         zoomEndUnit.style.display = 'none';
+        zoomSourceCheck.checked = false;
       }
     });
 
@@ -1586,7 +1631,7 @@
 
   // ── generate thumbs ───────────────────────────────────────────
   async function generateThumbs() {
-    if (allSessions.length === 0) return;
+    if (allSessions.length === 0 || currentSessionIdx < 0) return;
     const session = allSessions[currentSessionIdx];
     const btn = document.getElementById('thumbsBtn');
     btn.disabled = true;

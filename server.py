@@ -9,7 +9,7 @@ import threading
 import queue
 import subprocess
 import yt_dlp
-from detector import detect_ko_events, cut_clips, cut_extended_vertical, cut_manual_clip
+from detector import detect_ko_events, cut_clips, cut_extended_vertical, cut_manual_clip, get_clip_duration
 from renderer import render_with_text, render_stitch, render_replay, render_montage, render_dankify, render_fade_to_text, render_hype_reel, render_beat_sync, render_hook_slowmo
 
 app = Flask(__name__)
@@ -224,9 +224,10 @@ def render_text_route():
     extend_sec      = float(data.get("extend_sec", 0.0))
     normalize_audio = bool(data.get("normalize_audio", False))
     zoom            = bool(data.get("zoom", False))
+    zoom_from_original = bool(data.get("zoom_from_original", False))
     zoom_end_mode   = data.get("zoom_end_mode", "none").strip()
     zoom_end_sec    = float(data.get("zoom_end_sec", 0.0))
-    FG_ZOOM         = 1.5
+    FG_ZOOM         = float(data.get("zoom_factor") or 1.5)
 
     if not clip_rel:
         return jsonify({"error": "No clip specified"}), 400
@@ -281,7 +282,40 @@ def render_text_route():
                     pass
 
         can_cut = vod_path and os.path.exists(vod_path) and (ko_ts is not None or explicit_start is not None)
-        if can_cut:
+
+        orig_dir       = os.path.join(os.path.dirname(os.path.dirname(clip_path)), "original")
+        orig_fname     = os.path.basename(clip_path).replace("_vertical.mp4", "_original.mp4")
+        orig_clip_path = os.path.join(orig_dir, orig_fname)
+
+        use_original_source = zoom_from_original or not can_cut
+
+        if use_original_source:
+            if os.path.exists(orig_clip_path):
+                if zoom_from_original:
+                    capture("📽️  Zooming from 16:9 original clip (user selected).")
+                else:
+                    capture("📽️  VOD unavailable — using 16:9 original as zoom source.")
+                tmp_extended = tempfile.NamedTemporaryFile(suffix=".mp4", delete=False).name
+                ok_cut = cut_extended_vertical(
+                    orig_clip_path, None, extend_sec, tmp_extended,
+                    log_fn=capture,
+                    fg_zoom=FG_ZOOM if zoom else 1.0,
+                    explicit_start=0.0,
+                    base_duration=get_clip_duration(orig_clip_path),
+                    zoom_end_mode=zoom_end_mode if zoom else "none",
+                    zoom_end_sec=zoom_end_sec,
+                )
+                if ok_cut:
+                    render_source = tmp_extended
+                else:
+                    capture("⚠️  Cut from original failed — using standard clip.")
+            elif zoom_from_original:
+                capture("⚠️  Original clip not found — falling back to VOD source for zoom.")
+                use_original_source = False
+            else:
+                capture("⚠️  VOD not found — zoom/extend unavailable for this session.")
+
+        if not use_original_source and can_cut:
             tmp_extended = tempfile.NamedTemporaryFile(suffix=".mp4", delete=False).name
             ok_cut = cut_extended_vertical(
                 vod_path, ko_ts, extend_sec, tmp_extended,
@@ -296,32 +330,8 @@ def render_text_route():
                 render_source = tmp_extended
             else:
                 capture("⚠️  Cut failed — using standard clip.")
-        else:
-            if not vod_path or not os.path.exists(vod_path or ""):
-                # Fallback: use the 16:9 original clip if the VOD download is gone
-                orig_dir = os.path.join(os.path.dirname(os.path.dirname(clip_path)), "original")
-                orig_fname = os.path.basename(clip_path).replace("_vertical.mp4", "_original.mp4")
-                orig_clip_path = os.path.join(orig_dir, orig_fname)
-                if os.path.exists(orig_clip_path):
-                    capture("📽️  VOD unavailable — using 16:9 original as zoom source.")
-                    tmp_extended = tempfile.NamedTemporaryFile(suffix=".mp4", delete=False).name
-                    ok_cut = cut_extended_vertical(
-                        orig_clip_path, None, extend_sec, tmp_extended,
-                        log_fn=capture,
-                        fg_zoom=FG_ZOOM if zoom else 1.0,
-                        explicit_start=0.0,
-                        base_duration=None,
-                        zoom_end_mode=zoom_end_mode if zoom else "none",
-                        zoom_end_sec=zoom_end_sec,
-                    )
-                    if ok_cut:
-                        render_source = tmp_extended
-                    else:
-                        capture("⚠️  Cut from original failed — using standard clip.")
-                else:
-                    capture("⚠️  VOD not found — zoom/extend unavailable for this session.")
-            else:
-                capture("⚠️  No timestamp found for this clip — re-cut it via Manual Cut to enable zoom/extend.")
+        elif not use_original_source and not can_cut:
+            capture("⚠️  No timestamp found for this clip — re-cut it via Manual Cut to enable zoom/extend.")
 
     try:
         ok = render_with_text(render_source, above, below, output_path, log_fn=capture, hook=hook, hook_offset=hook_offset, normalize_audio=normalize_audio, hook_transition=hook_transition, cut_end_sec=cut_end_sec, hook_only=hook_only, fg_zoom=FG_ZOOM if zoom else 1.0, hook_above=hook_above, hook_below=hook_below)
@@ -1138,7 +1148,7 @@ def run_archive():
                 pass
 
         review_path   = os.path.join(session_path, "review.json")
-        review_states = None  # None = no review file (manual folder — include everything)
+        review_states = {}  # no review file = nothing flagged yet
         if os.path.exists(review_path):
             try:
                 with open(review_path) as f:
@@ -1160,7 +1170,7 @@ def run_archive():
                 base        = fname.replace("_vertical.mp4", "")
                 final_fname = base + "_final.mp4"
                 has_final   = os.path.exists(os.path.join(finals_dir, final_fname)) if os.path.exists(finals_dir) else False
-                is_flagged  = review_states is None or review_states.get(base) == "flagged"
+                is_flagged  = review_states.get(base) == "flagged"
                 if not (is_flagged or has_final):
                     continue
 
