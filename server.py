@@ -9,7 +9,7 @@ import threading
 import queue
 import subprocess
 import yt_dlp
-from detector import detect_ko_events, cut_clips, cut_extended_vertical, cut_manual_clip, get_clip_duration
+from detector import detect_ko_events, cut_clips, cut_extended_vertical, cut_manual_clip, get_clip_duration, verify_video_integrity
 from renderer import render_with_text, render_stitch, render_replay, render_montage, render_dankify, render_fade_to_text, render_hype_reel, render_beat_sync, render_hook_slowmo
 
 app = Flask(__name__)
@@ -809,6 +809,7 @@ def logs():
 
 def run_pipeline(url, local_path='', start_sec=None, end_sec=None):
     try:
+        expected_duration_sec = None
         if local_path:
             if not os.path.exists(local_path):
                 log(f"❌  File not found: {local_path}")
@@ -820,14 +821,18 @@ def run_pipeline(url, local_path='', start_sec=None, end_sec=None):
         else:
             os.makedirs("downloads", exist_ok=True)
             log("🔎  Fetching video info...")
-            video_title, expected_filename = get_video_info(url)
+            video_title, filename_stem, expected_duration_sec = get_video_info(url)
             if not video_title:
                 log("❌  Could not fetch video info.")
                 log("__done__")
                 return
             log(f"📺  Title: {video_title}")
-            cached_path = os.path.join("downloads", expected_filename)
-            if os.path.exists(cached_path):
+            cached_path = next(
+                (p for ext in ('.mp4', '.mkv')
+                 if os.path.exists(p := os.path.join("downloads", filename_stem + ext))),
+                None,
+            )
+            if cached_path:
                 log("✅  Already downloaded — skipping re-download.")
                 video_path = cached_path
             else:
@@ -837,6 +842,21 @@ def run_pipeline(url, local_path='', start_sec=None, end_sec=None):
                     log("❌  Download failed.")
                     log("__done__")
                     return
+
+        log("🔎  Verifying download integrity...")
+        if not verify_video_integrity(video_path, log_fn=log, expected_duration_sec=expected_duration_sec):
+            log("❌  Video file is corrupted or unreadable (likely a broken download/merge).")
+            if not local_path:
+                try:
+                    os.remove(video_path)
+                    cache_path = os.path.splitext(video_path)[0] + "_ko_cache.json"
+                    if os.path.exists(cache_path):
+                        os.remove(cache_path)
+                    log("🗑  Removed corrupted download — please retry.")
+                except Exception as e:
+                    log(f"⚠️  Could not remove corrupted file: {e}")
+            log("__done__")
+            return
 
         log("\n🔍  Scanning for KO flashes...")
         events = detect_ko_events(video_path, log_fn=log, start_scan_sec=start_sec, max_scan_sec=end_sec)
@@ -864,19 +884,20 @@ def run_pipeline(url, local_path='', start_sec=None, end_sec=None):
         log("__done__")
 
 
+VOD_OUTTMPL = 'downloads/%(title)s.%(ext)s'
+
+
 def get_video_info(url):
-    ydl_opts = {'quiet': True, 'skip_download': True}
+    ydl_opts = {'quiet': True, 'skip_download': True, 'outtmpl': VOD_OUTTMPL}
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=False)
             title = info.get('title', 'Unknown')
             safe = ydl.prepare_filename(info).replace('\\', '/').split('/')[-1]
-            if not safe.endswith('.mp4'):
-                safe = os.path.splitext(safe)[0] + '.mp4'
-            return title, safe
+            return title, os.path.splitext(safe)[0], info.get('duration')
     except Exception as e:
         log(f"⚠️  Could not fetch info: {e}")
-        return None, None
+        return None, None, None
 
 
 def download_vod(url):
@@ -893,16 +914,19 @@ def download_vod(url):
 
     ydl_opts = {
         'format': 'bestvideo+bestaudio/best',
-        'outtmpl': 'downloads/%(title)s.%(ext)s',
-        'merge_output_format': 'mp4',
+        'outtmpl': VOD_OUTTMPL,
+        'merge_output_format': 'mkv',
+        'remuxvideo': 'mkv',
         'logger': YTLogger(),
+        'retries': float('inf'),
+        'fragment_retries': float('inf'),
     }
 
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         info = ydl.extract_info(url, download=True)
         filename = ydl.prepare_filename(info).replace('\\', '/').split('/')[-1]
-        if not filename.endswith('.mp4'):
-            filename = os.path.splitext(filename)[0] + '.mp4'
+        if not filename.endswith('.mkv'):
+            filename = os.path.splitext(filename)[0] + '.mkv'
 
     video_path = os.path.join("downloads", filename)
     if os.path.exists(video_path):

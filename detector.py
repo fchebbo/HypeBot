@@ -75,6 +75,43 @@ def _save_cache(video_path, events, log_fn=print):
         log_fn(f"⚠️  Could not save cache: {e}")
 
 
+def verify_video_integrity(video_path, log_fn=print, sample_points=(0.0, 0.25, 0.5, 0.75, 0.95), expected_duration_sec=None):
+    """Sample-decode a few frames spread across the file to catch corrupted/truncated downloads
+    (e.g. a dropped fragment mid-merge on a long VOD) before a full scan wastes time on garbage data.
+    Also cross-checks the container's self-reported duration against the source's real duration
+    (when known) — a broken index can report a wildly short duration, which would otherwise let
+    the frame-sampling below pass trivially since every sample lands inside the bogus short window."""
+    cap = cv2.VideoCapture(video_path)
+    if not cap.isOpened():
+        cap.release()
+        return False
+    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    fps = cap.get(cv2.CAP_PROP_FPS)
+    if total_frames <= 0:
+        cap.release()
+        return False
+    if expected_duration_sec and fps > 0:
+        reported_duration_sec = total_frames / fps
+        if reported_duration_sec < expected_duration_sec * 0.9:
+            log_fn(f"⚠️  Container reports {reported_duration_sec:.1f}s but source is {expected_duration_sec:.1f}s — index looks truncated.")
+            cap.release()
+            return False
+    for pct in sample_points:
+        target_frame = int(total_frames * pct)
+        cap.set(cv2.CAP_PROP_POS_FRAMES, target_frame)
+        ok = False
+        for _ in range(5):
+            ret, frame = cap.read()
+            if ret and frame is not None:
+                ok = True
+                break
+        if not ok:
+            cap.release()
+            return False
+    cap.release()
+    return True
+
+
 def dump_frame_at(video_path, target_sec, out_path="debug_frame.png", log_fn=print):
     cap = cv2.VideoCapture(video_path)
     fps = cap.get(cv2.CAP_PROP_FPS)

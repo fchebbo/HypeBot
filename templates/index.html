@@ -331,7 +331,7 @@
     /* ── review section ── */
     .review {
       width: 100%;
-      max-width: 960px;
+      max-width: 100%;
       display: none;
     }
     .review.show { display: block; }
@@ -355,6 +355,7 @@
       grid-template-columns: repeat(3, 1fr);
       gap: 8px;
       flex: 1;
+      max-width: 1200px;
       min-width: 0;
     }
     .session-tab {
@@ -391,8 +392,8 @@
     /* ── clips grid ── */
     .clips-grid {
       display: grid;
-      grid-template-columns: repeat(3, 1fr);
-      gap: 16px;
+      grid-template-columns: repeat(auto-fill, minmax(440px, 1fr));
+      gap: 24px;
     }
 
     .clip-card {
@@ -500,7 +501,7 @@
     .state-btn.skip-active  { background: var(--muted); border-color: var(--muted); color: #fff; }
 
     /* ── filter bar ── */
-    .session-meta { margin-bottom: 10px; }
+    .session-meta { margin-bottom: 10px; max-width: 1200px; }
     .session-meta textarea {
       background: var(--surface);
       border: 1px solid var(--border);
@@ -730,6 +731,13 @@
         <label>To <input id="scanEnd" type="text" placeholder="end"></label>
       </div>
     </details>
+
+    <div class="hook-row" style="margin: 6px 0;">
+      <input type="checkbox" id="reviewStartCheck">
+      <label for="reviewStartCheck" style="font-size:11px;color:var(--muted);">Start review at</label>
+      <input id="reviewStartSec" class="hook-offset-input" type="number" value="6" min="0" step="1" style="width:50px">
+      <span style="font-size:11px;color:var(--muted);">sec (skip to mid-clip when reviewing)</span>
+    </div>
 
     <div class="progress-wrap" id="progressWrap">
       <div class="progress-bar"></div>
@@ -1138,7 +1146,14 @@
     }
   }
 
-  function makeVideoEl(src, thumb, bustCache) {
+  function getReviewStartSec() {
+    const check = document.getElementById('reviewStartCheck');
+    if (!check || !check.checked) return null;
+    const sec = parseFloat(document.getElementById('reviewStartSec').value);
+    return isNaN(sec) || sec < 0 ? null : sec;
+  }
+
+  function makeVideoEl(src, thumb, bustCache, seekReview = true) {
     const video = document.createElement('video');
     const qs = bustCache ? `?t=${Date.now()}` : '';
     video.src = '/clips-serve/' + encodePath(src) + qs;
@@ -1146,6 +1161,14 @@
     video.preload = thumb ? 'none' : 'metadata';
     video.playsInline = true;
     if (thumb) video.poster = '/clips-serve/' + encodePath(thumb);
+    if (seekReview) {
+      video.addEventListener('loadedmetadata', () => {
+        const startAt = getReviewStartSec();
+        if (startAt !== null && startAt < video.duration) {
+          video.currentTime = startAt;
+        }
+      });
+    }
     return video;
   }
 
@@ -1601,7 +1624,7 @@
 
     const wrap = document.createElement('div');
     wrap.className = 'clip-video-wrap';
-    wrap.appendChild(makeVideoEl(path, null, true));
+    wrap.appendChild(makeVideoEl(path, null, true, false));
 
     const footer = document.createElement('div');
     footer.className = 'clip-footer';
