@@ -1391,6 +1391,29 @@
     extendRow.appendChild(extendInput);
     extendRow.appendChild(extendUnit);
 
+    const prependRow = document.createElement('div');
+    prependRow.className = 'extend-row';
+
+    const prependLabel = document.createElement('label');
+    prependLabel.textContent = 'Extend before start';
+
+    const prependInput = document.createElement('input');
+    prependInput.className = 'hook-offset-input';
+    prependInput.type = 'number';
+    prependInput.value = '0';
+    prependInput.min = '0';
+    prependInput.max = '20.0';
+    prependInput.step = '0.5';
+    prependInput.title = 'Extra seconds of lead-in before the standard clip start (for combos longer than the default window)';
+
+    const prependUnit = document.createElement('span');
+    prependUnit.textContent = 's';
+    prependUnit.style.cssText = 'font-size:11px;color:var(--muted);';
+
+    prependRow.appendChild(prependLabel);
+    prependRow.appendChild(prependInput);
+    prependRow.appendChild(prependUnit);
+
     const cutRow = document.createElement('div');
     cutRow.className = 'extend-row';
 
@@ -1461,6 +1484,7 @@
             hook_above:      hookAboveInput.value.trim(),
             hook_below:      hookBelowInput.value.trim(),
             extend_sec:      parseFloat(extendInput.value) || 0,
+            prepend_sec:     parseFloat(prependInput.value) || 0,
             cut_end_sec:     parseFloat(cutInput.value) || 0,
             normalize_audio: normCheck.checked,
             zoom:            zoomCheck.checked,
@@ -1472,8 +1496,11 @@
         });
         const data = await res.json();
         if (data.ok) {
-          status.textContent = '✅  Final saved.';
-          status.className = 'render-status show';
+          const warnings = (data.logs || []).filter(l => l.startsWith('⚠️'));
+          status.textContent = warnings.length
+            ? `✅  Final saved. ${warnings.join(' ')}`
+            : '✅  Final saved.';
+          status.className = warnings.length ? 'render-status show err' : 'render-status show';
           const currentTitle = allSessions[currentSessionIdx]?.title;
           const r2 = await fetch('/clips-list');
           const d2 = await r2.json();
@@ -1500,6 +1527,7 @@
     textPanel.appendChild(hookAboveInput);
     textPanel.appendChild(hookBelowInput);
     textPanel.appendChild(extendRow);
+    textPanel.appendChild(prependRow);
     textPanel.appendChild(cutRow);
     textPanel.appendChild(normRow);
 

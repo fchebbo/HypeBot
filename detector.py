@@ -528,7 +528,7 @@ def get_clip_duration(video_path):
     return total_frames / fps
 
 
-def cut_extended_vertical(video_path, ko_timestamp, extend_sec, output_path, log_fn=print, fg_zoom=1.0, explicit_start=None, base_duration=None, zoom_end_mode="none", zoom_end_sec=0.0):
+def cut_extended_vertical(video_path, ko_timestamp, extend_sec, output_path, log_fn=print, fg_zoom=1.0, explicit_start=None, base_duration=None, zoom_end_mode="none", zoom_end_sec=0.0, prepend_sec=0.0):
     cap = cv2.VideoCapture(video_path)
     src_width  = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     src_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
@@ -551,11 +551,16 @@ def cut_extended_vertical(video_path, ko_timestamp, extend_sec, output_path, log
     fg_y      = (out_height - fg_height) // 2
 
     if explicit_start is not None:
-        start    = explicit_start
-        duration = (base_duration or (CLIP_BEFORE_SEC + CLIP_AFTER_SEC)) + extend_sec
+        base_start = explicit_start
+        base_duration = base_duration or (CLIP_BEFORE_SEC + CLIP_AFTER_SEC)
     else:
-        start    = max(0, ko_timestamp - CLIP_BEFORE_SEC)
-        duration = CLIP_BEFORE_SEC + CLIP_AFTER_SEC + extend_sec
+        base_start = max(0, ko_timestamp - CLIP_BEFORE_SEC)
+        base_duration = CLIP_BEFORE_SEC + CLIP_AFTER_SEC
+
+    # Clamp prepend at 0 rather than letting a request for more lead-in than
+    # exists shift the whole window later and eat into the tail instead.
+    start    = max(0, base_start - prepend_sec)
+    duration = base_duration + extend_sec + (base_start - start)
 
     use_dynamic = (fg_zoom > 1.0
                    and zoom_end_mode in ("zoom_out", "pan_left", "pan_right")

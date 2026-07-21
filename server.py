@@ -222,6 +222,7 @@ def render_text_route():
         below = hook_below
     cut_end_sec     = float(data.get("cut_end_sec", 0.0))
     extend_sec      = float(data.get("extend_sec", 0.0))
+    prepend_sec     = float(data.get("prepend_sec", 0.0))
     normalize_audio = bool(data.get("normalize_audio", False))
     zoom            = bool(data.get("zoom", False))
     zoom_from_original = bool(data.get("zoom_from_original", False))
@@ -256,7 +257,7 @@ def render_text_route():
     render_source = clip_path
     tmp_extended  = None
 
-    if extend_sec > 0 or zoom:
+    if extend_sec > 0 or prepend_sec > 0 or zoom:
         meta_path = os.path.join(clips_root, session, "meta.json")
         ko_ts     = _parse_ko_ts_from_filename(orig_name)
         vod_path  = None
@@ -304,6 +305,7 @@ def render_text_route():
                     base_duration=get_clip_duration(orig_clip_path),
                     zoom_end_mode=zoom_end_mode if zoom else "none",
                     zoom_end_sec=zoom_end_sec,
+                    prepend_sec=prepend_sec,
                 )
                 if ok_cut:
                     render_source = tmp_extended
@@ -325,6 +327,7 @@ def render_text_route():
                 base_duration=explicit_base_dur,
                 zoom_end_mode=zoom_end_mode if zoom else "none",
                 zoom_end_sec=zoom_end_sec,
+                prepend_sec=prepend_sec,
             )
             if ok_cut:
                 render_source = tmp_extended
