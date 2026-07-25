@@ -255,13 +255,22 @@ def detect_ko_events(video_path, force_rescan=False, log_fn=print, max_scan_sec=
 
     cap.release()
 
-    # Merge red flash events that have no nearby white flash (player-cam cutaway cases)
+    # Red flash fires right at the hit (offset only 0.5s) so it's a far more
+    # reliable KO anchor than the fixed 6s pre-victory-flash guess, which is
+    # just a typical average and varies a lot by character/kill type. When a
+    # red flash has a nearby white flash, use the red timing to correct that
+    # white event's ko_timestamp instead of discarding it. Only fall back to
+    # creating a red-only event when there's no white flash nearby at all
+    # (player-cam cutaway cases).
     for red in red_events:
-        has_nearby_white = any(
-            abs(w['victory_flash_timestamp'] - red['flash_start']) <= RED_MERGE_WINDOW_SEC
-            for w in ko_events
+        nearby_white = min(
+            (w for w in ko_events if abs(w['victory_flash_timestamp'] - red['flash_start']) <= RED_MERGE_WINDOW_SEC),
+            key=lambda w: abs(w['victory_flash_timestamp'] - red['flash_start']),
+            default=None,
         )
-        if not has_nearby_white:
+        if nearby_white is not None:
+            nearby_white['ko_timestamp'] = max(0, red['flash_start'] - RED_KO_OFFSET_SEC)
+        else:
             ko_ts = max(0, red['flash_start'] - RED_KO_OFFSET_SEC)
             log_fn(f"  🔴  KO detected via red flash at {_fmt_ts(ko_ts)} (flash: {red['flash_duration']:.2f}s)")
             ko_events.append({
