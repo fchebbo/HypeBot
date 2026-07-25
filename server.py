@@ -851,13 +851,19 @@ def run_pipeline(url, local_path='', start_sec=None, end_sec=None):
             log("❌  Video file is corrupted or unreadable (likely a broken download/merge).")
             if not local_path:
                 try:
-                    os.remove(video_path)
+                    failed_dir = os.path.join("downloads", "FAILED")
+                    os.makedirs(failed_dir, exist_ok=True)
+                    stamp = time.strftime("%Y%m%d_%H%M%S")
+                    base_name = os.path.basename(video_path)
+                    failed_video_path = os.path.join(failed_dir, f"{stamp}_{base_name}")
+                    shutil.move(video_path, failed_video_path)
                     cache_path = os.path.splitext(video_path)[0] + "_ko_cache.json"
                     if os.path.exists(cache_path):
-                        os.remove(cache_path)
-                    log("🗑  Removed corrupted download — please retry.")
+                        failed_cache_path = os.path.join(failed_dir, f"{stamp}_{os.path.basename(cache_path)}")
+                        shutil.move(cache_path, failed_cache_path)
+                    log(f"📁  Moved corrupted download to {failed_video_path} for analysis — please retry.")
                 except Exception as e:
-                    log(f"⚠️  Could not remove corrupted file: {e}")
+                    log(f"⚠️  Could not move corrupted file: {e}")
             log("__done__")
             return
 
@@ -927,16 +933,22 @@ def download_vod(url):
 
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         info = ydl.extract_info(url, download=True)
+        requested = info.get('requested_downloads') or []
+        actual_path = requested[0].get('filepath') if requested else None
         filename = ydl.prepare_filename(info).replace('\\', '/').split('/')[-1]
-        if not filename.endswith('.mkv'):
-            filename = os.path.splitext(filename)[0] + '.mkv'
 
-    video_path = os.path.join("downloads", filename)
-    if os.path.exists(video_path):
-        return video_path
-    downloads = os.listdir("downloads")
-    if downloads:
-        return os.path.join("downloads", downloads[0])
+    # Prefer yt-dlp's own record of what it wrote to disk — reconstructing the
+    # name from prepare_filename + a guessed extension can miss postprocessing
+    # (remux/merge) renames, and a wrong guess here must never silently fall
+    # back to an unrelated file already sitting in downloads/.
+    if actual_path and os.path.exists(actual_path):
+        return actual_path
+
+    base = os.path.splitext(os.path.join("downloads", filename))[0]
+    for ext in ('.mkv', '.mp4'):
+        candidate = base + ext
+        if os.path.exists(candidate):
+            return candidate
     return None
 
 
