@@ -35,6 +35,7 @@ RED_KO_OFFSET_SEC      = 0.5   # red flash fires at the hit — small offset
 MIN_RED_FLASH_SEC      = 0.3
 MAX_RED_FLASH_SEC      = 1.8
 RED_MERGE_WINDOW_SEC   = 10.0  # red event within this many seconds of a white event = same KO
+RED_FLASH_GAP_TOLERANCE_SEC = 0.2  # brief sub-threshold dips (noisy signal) don't end an in-progress flash
 
 
 def _fmt_ts(seconds):
@@ -150,6 +151,7 @@ def detect_ko_events(video_path, force_rescan=False, log_fn=print, max_scan_sec=
     flash_start_pts = 0.0
     in_red_flash = False
     red_flash_start_pts = 0.0
+    red_flash_last_above_pts = 0.0
     red_flash_end_pts = 0.0
     red_events = []
     frame_num = 0
@@ -227,13 +229,20 @@ def detect_ko_events(video_path, force_rescan=False, log_fn=print, max_scan_sec=
             is_red_flash_frame = red_ratio >= RED_PIXEL_RATIO
             in_cooldown = (current_pts - red_flash_end_pts) < MIN_RED_FLASH_SEC
 
-            if is_red_flash_frame and not in_cooldown:
-                if not in_red_flash:
+            if is_red_flash_frame:
+                if not in_red_flash and not in_cooldown:
                     in_red_flash = True
                     red_flash_start_pts = current_pts
-            else:
                 if in_red_flash:
-                    red_duration = current_pts - red_flash_start_pts
+                    red_flash_last_above_pts = current_pts
+            else:
+                # The red ratio is a noisy signal (competing with character
+                # sprites/effects) and can briefly dip below threshold mid-flash —
+                # only end the flash once it's been below for longer than the
+                # gap tolerance, so one real flash isn't fragmented into pieces
+                # too short to individually clear MIN_RED_FLASH_SEC.
+                if in_red_flash and (current_pts - red_flash_last_above_pts) > RED_FLASH_GAP_TOLERANCE_SEC:
+                    red_duration = red_flash_last_above_pts - red_flash_start_pts
                     if MIN_RED_FLASH_SEC <= red_duration <= MAX_RED_FLASH_SEC:
                         red_events.append({
                             'flash_start': red_flash_start_pts,
@@ -262,15 +271,26 @@ def detect_ko_events(video_path, force_rescan=False, log_fn=print, max_scan_sec=
     # white event's ko_timestamp instead of discarding it. Only fall back to
     # creating a red-only event when there's no white flash nearby at all
     # (player-cam cutaway cases).
+    #
+    # The hit must physically precede the victory screen, never follow it —
+    # results screens often have their own decorative red flashes (e.g. a
+    # character-color-themed name-reveal animation) a few seconds *after* the
+    # white flash. Those aren't the KO and must not be used to "correct" it.
     for red in red_events:
         nearby_white = min(
-            (w for w in ko_events if abs(w['victory_flash_timestamp'] - red['flash_start']) <= RED_MERGE_WINDOW_SEC),
-            key=lambda w: abs(w['victory_flash_timestamp'] - red['flash_start']),
+            (
+                w for w in ko_events
+                if 0 <= (w['victory_flash_timestamp'] - red['flash_start']) <= RED_MERGE_WINDOW_SEC
+            ),
+            key=lambda w: w['victory_flash_timestamp'] - red['flash_start'],
             default=None,
         )
         if nearby_white is not None:
             nearby_white['ko_timestamp'] = max(0, red['flash_start'] - RED_KO_OFFSET_SEC)
-        else:
+        elif not any(
+            0 <= (red['flash_start'] - w['victory_flash_timestamp']) <= RED_MERGE_WINDOW_SEC
+            for w in ko_events
+        ):
             ko_ts = max(0, red['flash_start'] - RED_KO_OFFSET_SEC)
             log_fn(f"  🔴  KO detected via red flash at {_fmt_ts(ko_ts)} (flash: {red['flash_duration']:.2f}s)")
             ko_events.append({
