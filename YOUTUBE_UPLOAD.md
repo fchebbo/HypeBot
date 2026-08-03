@@ -1,5 +1,10 @@
 # YouTube Upload Feature — Implementation Brief
 
+> **Status: not implemented.** This is a design brief only — there is no `youtube_auth.py`,
+> `youtube_upload.py`, or `/upload-youtube` route in the codebase, and no upload button in
+> `templates/index.html`. Uploads to YouTube are still done manually via YouTube Studio. Treat
+> everything below as a plan, not documentation of existing behavior.
+
 ## Note to developer
 
 You have been granted full Manager access to the SoCal Smash YouTube channel and Google Cloud project. This means you are responsible for the full setup end-to-end — Google Cloud project creation, enabling the API, OAuth credentials, and wiring it into the app. You do not need to loop in the channel owner for any of the setup steps.
