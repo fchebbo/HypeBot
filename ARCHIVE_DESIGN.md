@@ -1,5 +1,10 @@
 # HypeBot Archive System — Design Doc
 
+> **Status: implemented** in `server.py` (`/archive`, `/archive-list`, `/run-archive`,
+> `/restore-venue`, `/archive-serve`, `/archive-thumb`) and `templates/archive.html`. This doc
+> is kept close to current behavior; see the additions below for what shipped beyond the
+> original design (dankify/replay/stitch archiving, and restore-by-venue).
+
 ## Concept
 
 A permanent, curated export of only the best clips — replacing the old "archive session"
@@ -20,6 +25,7 @@ After archiving and verifying, `clips/` and `downloads/` can be safely deleted t
 | Original 16:9 cut — same selection as above | ✅ / ❌ mirrors vertical |
 | Finals (tier 1 renders with hook/text) | ✅ always |
 | Montages | ✅ always |
+| Dankify, Replay, and Stitch outputs | ✅ always (added post-launch — scanned by filename suffix from any session subfolder) |
 | Session metadata (venue, source VOD URL) | ✅ always |
 
 ---
@@ -33,7 +39,10 @@ archive/
     ├── vertical/
     ├── original/
     ├── finals/
-    └── montages/
+    ├── montages/
+    ├── dankify/
+    ├── replay/
+    └── stitch/
 ```
 
 Month folder named `YYYY-MM` by archive run date.
@@ -93,6 +102,16 @@ No session-level subfolders — month is the top-level grouping.
 5. User confirms → files are **copied** (not moved) into `archive/YYYY-MM/`
 6. User visually verifies `/archive` looks correct
 7. User manually deletes `clips/` and `downloads/` when satisfied — never automatic
+
+---
+
+## Restore by Venue
+
+Implemented at `POST /restore-venue` (not in the original design — added afterward). Given a
+month and a venue name, copies every archived item tagged with that venue (clips, finals,
+montages, dankify, replay, stitch) from `archive/YYYY-MM/` back into `clips/`, using each
+item's meta.json entry to reconstruct the destination session/subfolder. Useful for pulling a
+venue's material back out to build a new montage or hype reel from previously archived clips.
 
 ---
 

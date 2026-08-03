@@ -14,7 +14,7 @@
 
 ---
 
-HypeBot downloads Smash Ultimate tournament VODs from YouTube or Twitch, automatically detects KO moments using flash detection, and cuts polished 9:16 vertical clips ready for YouTube Shorts, TikTok, or Instagram Reels.
+HypeBot downloads Smash Ultimate tournament VODs from YouTube or Twitch, automatically detects KO moments using flash detection, and cuts polished 9:16 vertical clips ready for YouTube Shorts, TikTok, or Instagram Reels. From there, a full post-production suite — hook text, slow-motion replays, montages, stitched clips, audio punch-up, beat-synced edits, compilation reels, and a permanent archive — takes clips the rest of the way to upload-ready.
 
 ---
 
@@ -128,15 +128,21 @@ HypeBot is running. To stop it when you're done, click into the Command Prompt w
 - [Setup — Mac](#setup--mac)
 - [Running HypeBot](#running-hypebot)
 - [Using HypeBot](#using-hypebot)
+  - Generate clips, review, add text, manual clips
+  - Hook + Slo-Mo, Montage (+ Original), Slow-motion Replay, Stitch, Dankify
+  - Fade to Text, Hype Reel, Beat Sync
+  - Archive your library
 
 ---
 
 ## How it works
 
 1. You paste a YouTube or Twitch VOD URL
-2. HypeBot downloads the VOD and scans it frame-by-frame for Smash Ultimate's signature KO flash
+2. HypeBot downloads the VOD and scans it frame-by-frame for Smash Ultimate's signature KO flash — both the white victory-screen flash and the red flash that fires at the finishing hit itself, for more reliable timing
 3. It cuts a clip around each KO — a 9:16 vertical version (Shorts-ready) and a 16:9 original
 4. You review clips in the browser, flag the best ones, add text overlays, and render finals
+5. Optionally, run flagged clips through Hook + Slo-Mo, Replay, Stitch, Dankify, Montage, Hype Reel, or Beat Sync to build out more elaborate content
+6. Periodically archive your best material into a permanent, curated library
 
 ---
 
@@ -365,6 +371,16 @@ If a VOD had no detected KO events, or you want to cut a specific moment that wa
 
 > If the VOD had 0 detected clips it will still appear in the session list as long as it was processed by HypeBot.
 
+### Hook + Slo-Mo
+
+A quicker single-clip tool for burning above-text onto a clip with a slow-motion window on the key moment.
+
+1. Go to `http://localhost:5000/hook-slowmo`
+2. Select a clip — a preview player appears
+3. Set the slow-motion window (start/end) and speed, and optionally enable **Zoom**
+4. Add above-text (one or two lines) and pick a transition
+5. Click **RENDER** — saved to `clips/[session]/finals/` as `..._hookslomo.mp4`
+
 ### Create a montage
 
 The montage tool assembles multiple clips into a single Short with transitions between them.
@@ -375,6 +391,8 @@ The montage tool assembles multiple clips into a single Short with transitions b
 4. Add optional top text and a logo overlay
 5. Click **RENDER MONTAGE** — when done, the result plays inline
 6. Saved to `clips/[session]/montage/`
+
+> **Montage (Original)** — `http://localhost:5000/montage-original` is the same tool, but built from 16:9 original clips instead of vertical ones. Useful for regular (non-Shorts) YouTube uploads.
 
 ### Create a slow-motion replay
 
@@ -410,6 +428,33 @@ Dankify applies audio compression and processing to a clip for a punchier, more 
 2. Select the session and clip, set the hook start point
 3. Click **DANKIFY** — saved to `clips/[session]/dankify/`
 
+### Fade to Text
+
+A standalone tool for applying a fade-to-text transition effect on a clip.
+
+1. Go to `http://localhost:5000/fadetotext`
+2. Select the session and clip, set the timing and the text
+3. Click **RENDER** — saved as a final in `clips/[session]/finals/`
+
+### Build a Hype Reel
+
+A larger compilation format — strings several clips together with a title card, logo, and outro music, built from the 16:9 original clips.
+
+1. Go to `http://localhost:5000/hype-reel`
+2. Select a session with original clips, then add 2 or more clips to the reel
+3. Set the title text, hook offset and transition per clip, and pick a logo and outro music track (from `Props/`)
+4. Click **RENDER HYPE REEL** — when done, the result plays inline
+5. Saved to `clips/[session]/hype_reels/`
+
+### Beat Sync
+
+Syncs a clip's KO hit moments to the beat of a music track, with a configurable visual effect on each beat.
+
+1. Go to `http://localhost:5000/beat-sync`
+2. Select the session, clip, and audio track
+3. Enter the hit times (from the clip) and beat times (from the track), pick an effect and timing offsets
+4. Click **RENDER** — the result plays inline when done
+
 ### Archive your library
 
 The archive is a permanent, curated export of your best clips — the source of truth for upload-ready content. Run it monthly to consolidate everything worth keeping before clearing out `clips/` and `downloads/`.
@@ -426,5 +471,7 @@ The archive is a permanent, curated export of your best clips — the source of 
 3. Confirm — files are copied (never moved) to `archive/YYYY-MM/`
 4. Browse the result: clips are grouped by venue, thumbnails load as you scroll
 5. Once you're satisfied, manually delete `clips/` and `downloads/` to reclaim disk space
+
+If you need something back out of the archive, use **restore by venue** on the archive page — it copies a venue's clips, finals, montages, dankify, replay, and stitch outputs from the selected month back into `clips/`.
 
 The archive page supports lazy-loaded thumbnails, click-to-play, collapsible venue sections, and one-click copy of the VOD source URL.

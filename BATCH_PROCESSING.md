@@ -1,5 +1,10 @@
 # Batch Processing Feature — Implementation Brief
 
+> **Status: not implemented.** This is a design brief only — there is no `/run-batch` route or
+> `run_batch_pipeline` function in `server.py`, and no Batch tab in `templates/index.html`.
+> HypeBot currently processes one VOD URL at a time. Treat everything below as a plan, not
+> documentation of existing behavior.
+
 ## Note to developer
 
 This is a self-contained feature addition. You have full access to the codebase and can implement this end-to-end without needing to loop in the channel owner. Read `server.py` and `templates/index.html` before starting so your implementation matches the existing patterns.
